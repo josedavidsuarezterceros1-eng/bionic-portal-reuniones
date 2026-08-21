@@ -32,7 +32,7 @@ var Cfg = (function () {
      * actualizarla acá. Desde la pestaña Configuración se puede pisar sin tocar el
      * código: lo que se guarde en el navegador tiene prioridad sobre esta línea.
      */
-    URL_POR_DEFECTO: 'https://script.google.com/macros/s/AKfycbyytAZS9cB0IazxFepsV9TbIRBABc3J28ab-txvBmSypVk6YlSXKlDiETj_ZnLiFBoVlQ/exec',
+    URL_POR_DEFECTO: 'https://script.google.com/macros/s/AKfycbx8-OHPoWQhw6_4p0HcUFs-jQln8rll0tyA3MNdrtShpRWnvubfaAPm_B-FBYJUbcMcyQ/exec',
 
     /*
      * 🔴 DOS cadencias, y la lenta NO es lenta. Adentro de una sala no existe el
