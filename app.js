@@ -186,23 +186,53 @@ var Reloj = (function () {
    Sesion
    ══════════════════════════════════════════════════════════════════════════ */
 var Sesion = (function () {
-  var LLAVE = 'portal_token';   // sessionStorage: se cierra al cerrar la pestaña
+  var LLAVE = 'portal_token';
+
+  /*
+   * Dónde se guarda el token depende de "mantener la sesión iniciada":
+   *
+   *   sin marcar → sessionStorage: muere al cerrar la pestaña. Es lo correcto en
+   *                una computadora compartida, que en la oficina es lo normal.
+   *   marcado    → localStorage: sobrevive, y el servidor emite un token de 30
+   *                días en vez de 12 h.
+   *
+   * 🔴 Lo que se guarda es el TOKEN, NUNCA la contraseña. Los paneles del CRM
+   * arrastran de antes la costumbre de guardar contraseñas en el navegador; acá
+   * no se repite. El token se puede vencer y se revalida contra la hoja en cada
+   * llamada; una contraseña guardada no se puede deshacer.
+   *
+   * El portal vive en github.io, otro dominio que los paneles del CRM, así que su
+   * almacenamiento es independiente: no hay forma de que pise las llaves de sesión
+   * de los otros paneles.
+   */
+  function leer(almacen) {
+    try { return almacen.getItem(LLAVE); } catch (e) { return null; }
+  }
 
   return {
     token: null,
     usuario: null,
 
     recuperar: function () {
-      try { this.token = sessionStorage.getItem(LLAVE); } catch (e) { this.token = null; }
+      // Primero el recordado, después el de esta pestaña.
+      this.token = leer(localStorage) || leer(sessionStorage);
       return this.token;
     },
-    guardar: function (token, usuario) {
+    guardar: function (token, usuario, recordar) {
       this.token = token; this.usuario = usuario;
-      try { sessionStorage.setItem(LLAVE, token); } catch (e) {}
+      try {
+        // Se limpian los DOS antes de escribir: si alguien entra sin marcar
+        // "recordar" después de haberlo marcado, el token viejo tiene que
+        // desaparecer del almacenamiento persistente, no quedar ahí vigente.
+        localStorage.removeItem(LLAVE);
+        sessionStorage.removeItem(LLAVE);
+        (recordar ? localStorage : sessionStorage).setItem(LLAVE, token);
+      } catch (e) {}
     },
     limpiar: function () {
       this.token = null; this.usuario = null;
       try { sessionStorage.removeItem(LLAVE); } catch (e) {}
+      try { localStorage.removeItem(LLAVE); } catch (e) {}
     },
     /** La sesión venció mientras se usaba el portal. */
     caida: function () {
@@ -1413,16 +1443,17 @@ var App = (function () {
 
     var email = UI.id('loginEmail').value.trim();
     var pass = UI.id('loginPass').value;
+    var recordar = UI.id('loginRecordar').checked;
     var btn = UI.id('loginBtn');
     avisoLogin('');
 
     if (!Cfg.url()) { avisoLogin('Falta configurar la dirección del backend.'); return; }
 
     btn.disabled = true;
-    API.post({ accion: 'login', email: email, password: pass })
+    API.post({ accion: 'login', email: email, password: pass, recordar: recordar })
       .then(function (r) {
         if (!r || !r.ok) { avisoLogin((r && r.message) || 'No se pudo ingresar.'); return; }
-        Sesion.guardar(r.token, r.usuario);
+        Sesion.guardar(r.token, r.usuario, recordar);
         UI.id('loginPass').value = '';
         entrarApp(r.usuario);
       })
