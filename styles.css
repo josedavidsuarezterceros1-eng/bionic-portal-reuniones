@@ -314,7 +314,6 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
   border: 1px solid var(--borde);
   border-radius: var(--r-lg);
   background: var(--surface);
-  padding: var(--sp-5);
   cursor: pointer;
   text-align: left;
   color: inherit;
@@ -339,17 +338,88 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
 }
 .sala-card:hover::after { opacity: 0.2; }
 
-.sala-card .fila-top { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-3); position: relative; }
-.sala-card h3 { font-size: 17.5px; margin-bottom: 2px; }
-.sala-card .manager { font-size: 12.5px; color: var(--txt-dim); }
+/* ── Portada ──────────────────────────────────────────────────────────────
+   El escudo se muestra COMPLETO (contain), no recortado: son emblemas y
+   recortarlos les come la corona o el borde. El fondo hace de marco. */
+.sala-portada {
+  position: relative;
+  height: 172px;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.06), transparent 70%), #071322;
+  border-bottom: 1px solid var(--borde);
+  overflow: hidden;
+}
+
+/*
+ * 🔴 La imagen va POSICIONADA, no como ítem centrado de una grilla.
+ *
+ * Con `display:grid; place-items:center` en el padre, el `height:100%` del <img>
+ * no se aplica —el ítem queda centrado y toma su altura de la proporción de la
+ * imagen—, así que un escudo cuadrado de 512×512 se renderizaba 311×311 dentro de
+ * un espacio de 311×172 y el `overflow:hidden` le cortaba 139 px de abajo. En el
+ * escudo de Sirari eso se comía el estandarte.
+ *
+ * Con `inset: 0` el alto queda definido y `contain` hace lo que promete: el
+ * emblema entero, centrado, con el fondo de la tarjeta a los costados.
+ */
+.sala-portada img {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: contain;
+  padding: var(--sp-4);
+  transition: transform var(--t-medio);
+}
+.sala-card:hover .sala-portada img { transform: scale(1.05); }
+
+/* Los escudos vienen con fondo claro y la tarjeta es oscura: sin este degradado
+   queda un bloque blanco cortado a filo contra el cuerpo. Es el mismo recurso
+   que usaba el diseño original. */
+.sala-portada::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(to top, #0b1c30 0%, rgba(11, 28, 48, 0.35) 22%, transparent 55%);
+  pointer-events: none;
+}
+
+.sala-estado {
+  position: absolute; top: 12px; right: 12px; z-index: 1;
+  background: rgba(7, 19, 34, 0.82);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+
+.sala-cuerpo { padding: var(--sp-4) var(--sp-5) var(--sp-5); position: relative; }
+
+.sala-badge {
+  display: inline-block;
+  font-size: 10.5px; font-weight: 700;
+  letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--txt-mute);
+  margin-bottom: 7px;
+}
+
+.sala-card h3 { font-size: 17.5px; margin-bottom: 6px; }
+.sala-card .manager {
+  font-size: 12.5px; color: var(--txt-dim);
+  display: flex; align-items: center; gap: 7px;
+}
+.sala-card .manager .material-symbols-rounded { font-size: 17px; }
+
 .sala-card .pie {
   position: relative;
-  margin-top: var(--sp-5);
+  margin-top: var(--sp-4);
   padding-top: var(--sp-3);
   border-top: 1px solid var(--borde);
   display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
   font-size: 12.5px; color: var(--txt-dim);
 }
+
+.sala-entrar {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--verde);
+  font-weight: 700; font-size: 13px;
+  white-space: nowrap;
+}
+.sala-entrar .material-symbols-rounded { font-size: 17px; transition: transform var(--t-rapido); }
+.sala-card:hover .sala-entrar .material-symbols-rounded { transform: translateX(3px); }
 
 .latido { width: 7px; height: 7px; border-radius: 50%; background: var(--verde); position: relative; flex: none; }
 .latido::after {

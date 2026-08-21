@@ -1141,30 +1141,58 @@ var Dashboard = (function () {
       .catch(function (e) { UI.toast(e.message || 'No se pudieron leer las salas.', 'error'); });
   }
 
+  /*
+   * Las portadas viven en el repo (img/), no en la nube de quien las generó.
+   *
+   * El prototipo apuntaba a URLs de AI Studio (lh3.googleusercontent.com/aida-public/…),
+   * que es alojamiento temporal: responden hoy y pueden desaparecer sin aviso. Una
+   * tarjeta rota en la pantalla de entrada, en plena reunión, por un servidor que no
+   * es nuestro. Están descargadas y versionadas al lado del resto.
+   *
+   * El mapa es del FRONTEND a propósito: la portada es identidad visual, no un dato
+   * del negocio, y no tiene por qué viajar en cada respuesta del servidor.
+   */
+  var PORTADA = { sirari: 'img/sirari.jpg', leones: 'img/leones.jpg', jaguares: 'img/jaguares.jpg' };
+
   function pintar(salas) {
     var cont = UI.id('grillaSalas');
     cont.innerHTML = salas.map(function (s) {
       var e = ESTADO[s.estado] || ESTADO.offline;
+      var img = PORTADA[s.id];
       return '' +
         '<button class="sala-card" data-sala="' + UI.esc(s.id) + '" style="--acento:' + UI.esc(s.color) + '">' +
-          '<div class="fila-top">' +
-            '<div><h3>' + UI.esc(s.nombre) + '</h3>' +
-            '<div class="manager">' + UI.esc(s.manager) + '</div></div>' +
-            '<span class="chip ' + e.chip + '">' +
+          '<div class="sala-portada">' +
+            (img ? '<img src="' + UI.esc(img) + '" alt="" loading="lazy">' : '') +
+            '<span class="chip ' + e.chip + ' sala-estado">' +
               (s.estado === 'live' ? '<span class="latido"></span>' : '') + e.txt +
             '</span>' +
           '</div>' +
-          '<div class="pie">' +
-            '<span>' + UI.esc(s.badge) + '</span>' +
-            '<span>' + (s.anfitrion
-              ? '<span class="material-symbols-rounded" style="font-size:15px">shield_person</span> ' + UI.esc(s.anfitrion.nombre)
-              : 'Sin anfitrión') + '</span>' +
+          '<div class="sala-cuerpo">' +
+            '<span class="sala-badge">' + UI.esc(s.badge) + '</span>' +
+            '<h3>' + UI.esc(s.nombre) + '</h3>' +
+            '<div class="manager">' +
+              '<span class="material-symbols-rounded">manage_accounts</span>' +
+              UI.esc(s.manager) +
+            '</div>' +
+            '<div class="pie">' +
+              '<span>' + (s.anfitrion
+                ? '<span class="material-symbols-rounded" style="font-size:15px">shield_person</span> ' + UI.esc(s.anfitrion.nombre)
+                : 'Sin anfitrión') + '</span>' +
+              '<span class="sala-entrar">Entrar a la sala' +
+                '<span class="material-symbols-rounded">arrow_forward</span></span>' +
+            '</div>' +
           '</div>' +
         '</button>';
     }).join('');
 
     Array.prototype.forEach.call(cont.querySelectorAll('.sala-card'), function (c) {
       c.onclick = function () { App.irASala(c.getAttribute('data-sala')); };
+    });
+
+    // Si una portada no carga, se saca en vez de dejar el ícono de imagen rota:
+    // la tarjeta se ve bien igual con su fondo, y nadie nota que faltaba algo.
+    Array.prototype.forEach.call(cont.querySelectorAll('.sala-portada img'), function (im) {
+      im.onerror = function () { im.remove(); };
     });
   }
 
