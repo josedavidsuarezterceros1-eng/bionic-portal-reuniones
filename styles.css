@@ -589,8 +589,12 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
 @keyframes rebote { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-13px) } }
 
 .cel-tipo {
-  display: inline-block;
-  margin: var(--sp-4) 0 var(--sp-2);
+  /* En bloque y centrado: la foto es inline-block (tiene que ajustarse al avatar
+     para que la insignia se posicione bien) y si la etiqueta también lo fuera,
+     compartirían renglón y la etiqueta pisaría al trofeo. */
+  display: block;
+  width: fit-content;
+  margin: var(--sp-4) auto var(--sp-2);
   padding: 6px 18px;
   border-radius: var(--r-full);
   font: 700 12.5px/1 var(--font-txt);
@@ -712,4 +716,58 @@ tbody tr:hover { background: var(--surface); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   AVATARES — las fotos salen de la columna FotoURL de la hoja Ejecutivos
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.avatar {
+  width: 34px; height: 34px; flex: none;
+  display: inline-grid; place-items: center;
+  border-radius: 50%;
+  overflow: hidden;
+  background: linear-gradient(135deg, var(--bg-elev-2), var(--bg-elev));
+  border: 1px solid var(--borde);
+  font: 700 12px/1 var(--font-txt);
+  color: var(--txt-dim);
+  letter-spacing: 0.02em;
+}
+.avatar { position: relative; }
+.avatar i { font-style: normal; }
+/* La foto va ENCIMA de las iniciales, no en su lugar: mientras carga se ven las
+   iniciales y nunca queda un círculo vacío. */
+.avatar img {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover; display: block;
+  background: var(--bg-elev);
+}
+
+.anfitrion-cara { display: flex; align-items: center; gap: 11px; margin-bottom: 12px; }
+.anfitrion-cara div { display: flex; flex-direction: column; min-width: 0; }
+.anfitrion-cara strong { font-size: 14px; }
+.anfitrion-cara span {
+  font-size: 10.5px; color: var(--txt-mute);
+  text-transform: uppercase; letter-spacing: 0.05em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* La cara de quien vendió, con el emoji de insignia. Reemplaza al emoji gigante:
+   ver una CARA conocida en pantalla pega distinto que ver un trofeo. */
+.cel-foto { position: relative; display: inline-block; margin-bottom: 6px; }
+.avatar-cel {
+  width: clamp(110px, 22vw, 150px); height: clamp(110px, 22vw, 150px);
+  font-size: clamp(34px, 7vw, 46px);
+  border: 3px solid var(--acento-cel, var(--ambar));
+  box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.04), 0 14px 40px rgba(0, 0, 0, 0.5);
+  color: var(--txt);
+  animation: rebote 1.1s ease-in-out infinite;
+}
+.cel-insignia {
+  position: absolute; right: -6px; bottom: -2px;
+  font-size: clamp(30px, 6vw, 42px);
+  filter: drop-shadow(0 3px 7px rgba(0, 0, 0, 0.6));
+  animation: rebote 1.1s ease-in-out infinite;
 }

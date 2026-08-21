@@ -422,13 +422,45 @@ var UI = (function () {
     }, tipo === 'error' ? 6000 : 3800);
   }
 
+  /** "Natalia Romay" → "NR". Lo que se muestra cuando no hay foto cargada. */
+  function iniciales(nombre) {
+    var p = String(nombre || '').trim().split(/\s+/).filter(Boolean);
+    if (!p.length) return '?';
+    return (p[0][0] + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase();
+  }
+
+  /**
+   * Avatar de una persona: su foto, o sus iniciales.
+   *
+   * ⚠️ Las fotos son enlaces de Drive (drive.google.com/thumbnail?id=…) y dependen
+   * de que ese archivo esté compartido. Si uno no carga, se cae a las iniciales en
+   * vez de dejar el ícono de imagen rota: media empresa sin foto se vería peor que
+   * media empresa con iniciales.
+   */
+  function avatar(foto, nombre, clase) {
+    var cls = 'avatar' + (clase ? ' ' + clase : '');
+    /*
+     * 🔴 Las iniciales van SIEMPRE, y la foto las tapa cuando termina de cargar.
+     *
+     * Al revés —foto primero, iniciales solo si falla— el círculo se ve VACÍO todo
+     * el tiempo que tarda la descarga. Son fotos de Drive: en la oficina cargan al
+     * instante, pero con internet flojo se ve un hueco, y el internet flojo es
+     * justo el de la reunión. Así nunca hay un momento sin nada.
+     *
+     * Si la imagen no llega, se saca y quedan las iniciales, que ya estaban.
+     */
+    return '<span class="' + cls + '"><i>' + esc(iniciales(nombre)) + '</i>' +
+      (foto ? '<img src="' + esc(foto) + '" alt="" loading="lazy" onerror="this.remove()">' : '') +
+      '</span>';
+  }
+
   function hora(ts) {
     if (!ts) return '—';
     var d = new Date(ts);
     return d.toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' });
   }
 
-  return { $: $, id: id, esc: esc, mostrar: mostrar, toast: toast, hora: hora };
+  return { $: $, id: id, esc: esc, mostrar: mostrar, toast: toast, hora: hora, avatar: avatar, iniciales: iniciales };
 })();
 
 
@@ -836,10 +868,9 @@ var Sala = (function () {
 
     if (r.anfitrion) {
       pintarSi(cont, firma,
-        '<div class="dato-fila"><span class="k">A cargo</span>' +
-        '<span class="v">' + UI.esc(r.anfitrion.nombre) + '</span></div>' +
-        '<div class="dato-fila"><span class="k">Cargo</span>' +
-        '<span class="v" style="font-size:12px">' + UI.esc(r.anfitrion.cargo || '—') + '</span></div>' +
+        '<div class="anfitrion-cara">' + UI.avatar(r.anfitrion.foto, r.anfitrion.nombre) +
+          '<div><strong>' + UI.esc(r.anfitrion.nombre) + '</strong>' +
+          '<span>' + UI.esc(r.anfitrion.cargo || '') + '</span></div></div>' +
         '<div class="dato-fila"><span class="k">Desde</span>' +
         '<span class="v">' + UI.hora(r.anfitrion.desde) + '</span></div>');
       return;
@@ -1092,7 +1123,8 @@ var Sala = (function () {
   function celebrar(item) {
     var esMat = item.tipo === 'matricula';
     var ov = UI.id('celebracion');
-    UI.id('celEmoji').textContent = esMat ? '🏆' : '💰';
+    UI.id('celFoto').innerHTML = UI.avatar(item.foto, item.ejecutivo, 'avatar-cel') +
+      '<span class="cel-insignia">' + (esMat ? '🏆' : '💰') + '</span>';
     UI.id('celTipo').textContent = esMat ? 'MATRÍCULA' : 'ABONO';
     UI.id('celNombre').textContent = item.ejecutivo || '';
     UI.id('celCargo').textContent = item.cargo || '';
@@ -1367,6 +1399,7 @@ var App = (function () {
 
   function entrarApp(usuario) {
     Sesion.usuario = usuario;
+    UI.id('uFoto').innerHTML = UI.avatar(usuario.fotoUrl, usuario.nombre);
     UI.id('uNombre').textContent = usuario.nombre;
     UI.id('uCargo').textContent = usuario.cargo || '—';
     UI.mostrar(UI.id('login'), false);
