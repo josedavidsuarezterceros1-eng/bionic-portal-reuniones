@@ -934,13 +934,13 @@ var Sala = (function () {
           '<div class="num" id="relojNum">–</div>' +
         '</div>' +
         '<p class="countdown-txt">' +
-          (yaAnote ? 'Su producción ya está anotada.' : '¿Tiene producción para festejar?') +
+          (yaAnote ? 'Producción anotada.' : '¿Producción para festejar?') +
         '</p>' +
       '</div>';
 
     html += yaAnote
       ? '<div class="ya-registre"><span class="material-symbols-rounded">check_circle</span>' +
-        'Registrada. Nadie más la ve hasta el destape.</div>'
+        'Nadie más la ve hasta el destape.</div>'
       : '<div class="botones-produccion">' +
           '<button class="btn-produccion btn-matricula" data-tipo="matricula">' +
             '<span class="material-symbols-rounded">workspace_premium</span> ¡Tengo Matrícula!</button>' +
@@ -1371,6 +1371,13 @@ var App = (function () {
       .catch(function () { mostrarLogin(''); });
   }
 
+  /** Muestra la pantalla técnica, con o sin sesión iniciada. */
+  function abrirConfig() {
+    UI.mostrar(UI.id('login'), false);
+    UI.mostrar(UI.id('app'), true);
+    irA('config');
+  }
+
   function iniciar() {
     /*
      * 🔴 El audio se desbloquea con el PRIMER gesto que haga la persona, sea cual
@@ -1390,6 +1397,17 @@ var App = (function () {
       document.addEventListener(ev, Audio_.desbloquear, { once: true, capture: true });
     });
 
+    /*
+     * La pantalla técnica no tiene pestaña: se entra poniendo #config al final de
+     * la dirección. Funciona incluso sin sesión iniciada, que es justo cuando hace
+     * falta — si la URL del backend quedara mal, el portal no deja ingresar y sin
+     * esta puerta habría que republicar el sitio para arreglarlo.
+     */
+    if (location.hash === '#config') abrirConfig();
+    window.addEventListener('hashchange', function () {
+      if (location.hash === '#config') abrirConfig();
+    });
+
     UI.id('loginForm').addEventListener('submit', login);
     UI.id('btnSalir').addEventListener('click', salir);
     UI.id('btnVolverSalas').addEventListener('click', function () { irA('dashboard'); });
@@ -1399,12 +1417,7 @@ var App = (function () {
     UI.id('btnCerrarCel').addEventListener('click', Sala.cerrarCelebracion);
     UI.id('btnRepetirSirena').addEventListener('click', Sala.repetirSirena);
 
-    UI.id('linkConfig').addEventListener('click', function (ev) {
-      ev.preventDefault();
-      UI.mostrar(UI.id('login'), false);
-      UI.mostrar(UI.id('app'), true);
-      irA('config');
-    });
+    UI.id('linkConfig').addEventListener('click', function (ev) { ev.preventDefault(); abrirConfig(); });
 
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (t) {
       t.addEventListener('click', function () { irA(t.getAttribute('data-vista')); });

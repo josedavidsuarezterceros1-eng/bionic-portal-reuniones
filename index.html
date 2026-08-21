@@ -94,9 +94,6 @@
       <button class="tab" data-vista="asistencia">
         <span class="material-symbols-rounded">fact_check</span> Asistencia
       </button>
-      <button class="tab" data-vista="config">
-        <span class="material-symbols-rounded">terminal</span> Configuración
-      </button>
     </nav>
 
     <div class="usuario-chip">
@@ -181,14 +178,27 @@
       <div id="asistenciaTabla"></div>
     </section>
 
-    <!-- ── Configuración ─────────────────────────────────────────────── -->
+    <!-- ── Configuración ───────────────────────────────────────────────
+         Sin pestaña en la barra: se llega solo poniendo #config en la dirección.
+
+         🔴 No es un secreto, es que NO ES UNA PANTALLA DEL EQUIPO. La dirección del
+         backend ya viene puesta en app.js, así que nadie del equipo necesita tocar
+         nada acá; y un director no tiene por qué ver las tripas de cómo está
+         programado el CRM. Cuando la empresa tenga directores que no programan,
+         esta pantalla sería ruido que invita a romper algo.
+
+         El instructivo de despliegue que vivía acá se BORRÓ a propósito: estaba
+         completo en el README del repo y dos copias de lo mismo se desincronizan
+         solas. La que quedaba en la pantalla publicada era, además, la que
+         cualquiera podía leer.
+    ── -->
     <section class="vista oculto" id="vista-config">
       <div class="vista-cabecera">
-        <h2>Configuración del backend</h2>
-        <p>Dónde vive el Google Apps Script que atiende a este portal.</p>
+        <h2>Conexión con el servidor</h2>
+        <p>Pantalla técnica. Los pasos de instalación están en el README del repositorio.</p>
       </div>
 
-      <div class="tarjeta" style="max-width:760px">
+      <div class="tarjeta" style="max-width:640px">
         <div class="campo" style="margin-bottom:16px">
           <label for="apiUrl">URL de la app web (termina en <code>/exec</code>)</label>
           <input type="url" id="apiUrl" placeholder="https://script.google.com/macros/s/AKfy.../exec">
@@ -202,43 +212,6 @@
           </button>
         </div>
         <div id="apiResultado" style="margin-top:16px"></div>
-      </div>
-
-      <div class="vista-cabecera" style="margin-top:32px">
-        <h2 style="font-size:19px">Cómo publicar el backend</h2>
-      </div>
-
-      <div class="pasos" style="max-width:760px">
-        <div class="paso">
-          Abra <strong>script.google.com</strong>, cree un proyecto nuevo y pegue el contenido de
-          <code>gas-backend.gs</code>.
-        </div>
-        <div class="paso">
-          Ejecute <code>setupPortal()</code> una vez. Crea la planilla propia del portal con sus
-          cuatro hojas. <strong>Este portal no escribe nada en las hojas del CRM</strong>: de todo el
-          sistema solo <em>lee</em> la hoja <code>Ejecutivos</code> para validar el ingreso.
-        </div>
-        <div class="paso">
-          Ejecute <code>diagnostico()</code> y mire el registro: le dice
-          <strong>quién puede ser anfitrión</strong> y a quién le falta el cargo bien escrito en la hoja.
-          Ese segundo grupo no da error en ningún lado — simplemente aprieta el botón y le dice que no.
-        </div>
-        <div class="paso">
-          <strong>Implementar → Nueva implementación → Aplicación web</strong>, con
-          <em>Ejecutar como: Yo</em> y <em>Quién tiene acceso: <strong>Cualquier persona</strong></em>.
-          Tiene que ser esa opción y no la de "cualquier persona con cuenta de Google": este portal
-          llama sin sesión de Google, y con la otra opción recibe la pantalla de ingreso de Google en
-          vez de datos.
-        </div>
-        <div class="paso">
-          Copie la URL que termina en <code>/exec</code> y péguela arriba.
-        </div>
-        <div class="paso">
-          <strong>Antes de la primera reunión:</strong> quien vaya a ser anfitrión tiene que entrar una
-          vez a <code>meet.jit.si</code> en otra pestaña e iniciar sesión con su cuenta de Google.
-          Jitsi gratuito no deja abrir una sala si nadie inició sesión, y sin eso el resto queda en
-          "esperando al moderador". Se hace <strong>una sola vez por navegador</strong>.
-        </div>
       </div>
     </section>
   </main>
