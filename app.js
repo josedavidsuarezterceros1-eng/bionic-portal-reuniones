@@ -208,7 +208,7 @@ var Sesion = (function () {
     caida: function () {
       if (!this.token) return;
       this.limpiar();
-      App.mostrarLogin('Tu sesión venció. Ingresá de nuevo.');
+      App.mostrarLogin('Su sesión venció. Ingrese de nuevo.');
     }
   };
 })();
@@ -460,11 +460,17 @@ var Jitsi = (function () {
         startWithAudioMuted: true,
         prejoinPageEnabled: true,
         disableDeepLinking: true,
-        enableWelcomePage: false
+        enableWelcomePage: false,
+        // Jitsi trae su propia interfaz y por defecto la sirve en inglés: el cartel
+        // de 'no moderators have yet arrived' aparecía así en pleno arranque de la
+        // reunión. Es la pantalla que más gente va a leer del portal sin que la
+        // hayamos escrito nosotros, así que va en el idioma de la casa.
+        defaultLanguage: 'es'
       },
       interfaceConfigOverwrite: {
         SHOW_JITSI_WATERMARK: false,
-        DEFAULT_REMOTE_DISPLAY_NAME: 'Participante Bionic Mind'
+        DEFAULT_REMOTE_DISPLAY_NAME: 'Participante Bionic Mind',
+        LANG_DETECTION: false
       },
       userInfo: {
         // El cargo va en el nombre, decisión del dueño: en la reunión se ve de
@@ -782,7 +788,7 @@ var Sala = (function () {
     if (!Jitsi.disponible()) {
       icono.textContent = 'wifi_off';
       titulo.textContent = 'No se pudo cargar el video';
-      txt.textContent = 'Jitsi no respondió. Revisá la conexión y recargá la página; el resto del portal sigue funcionando.';
+      txt.textContent = 'Jitsi no respondió. Revise la conexión y recargue la página; el resto del portal sigue funcionando.';
       return;
     }
     if (r.anfitrion) {
@@ -795,7 +801,7 @@ var Sala = (function () {
       icono.textContent = 'lock_clock';
       titulo.textContent = 'Esperando al anfitrión';
       txt.textContent = r.puedoReclamar
-        ? 'Podés tomar esta sala vos: usá el panel de la derecha.'
+        ? 'Puede tomar esta sala usted: use el panel de la derecha.'
         : 'La videollamada se abre cuando un responsable toma la sala.';
     }
   }
@@ -815,13 +821,13 @@ var Sala = (function () {
         '<div class="aviso ' + (mod ? 'aviso-ok' : 'aviso-info') + '" style="margin-bottom:12px">' +
           '<span class="material-symbols-rounded">' + (mod ? 'verified' : 'hourglass_top') + '</span>' +
           '<span>' + (mod
-            ? 'Tenés el control de la sala.'
-            : 'Entrá a la videollamada para terminar de abrir la sala.') + '</span>' +
+            ? 'Tiene el control de la sala.'
+            : 'Entre a la videollamada para terminar de abrir la sala.') + '</span>' +
         '</div>' +
         (mod ? '' :
           '<p style="font-size:12.5px;color:var(--txt-dim);margin-bottom:12px">' +
-          'Si Jitsi no te da el control, abrí <strong>meet.jit.si</strong> en otra pestaña e iniciá ' +
-          'sesión con tu cuenta de Google. Se hace una sola vez por navegador.</p>') +
+          'Si Jitsi no le da el control, abra <strong>meet.jit.si</strong> en otra pestaña e inicie ' +
+          'sesión con su cuenta de Google. Se hace una sola vez por navegador.</p>') +
         '<button class="btn btn-peligro btn-bloque" id="btnLiberar">' +
           '<span class="material-symbols-rounded">logout</span> Liberar la sala</button>')) return;
       UI.id('btnLiberar').onclick = liberar;
@@ -847,9 +853,9 @@ var Sala = (function () {
 
     if (!pintarSi(cont, firma,
       '<p style="font-size:13px;color:var(--txt-dim);margin-bottom:12px">' +
-        'Confirmá con tu contraseña para tomar el control de la reunión.</p>' +
+        'Confirme con su contraseña para tomar el control de la reunión.</p>' +
       '<div class="campo" style="margin-bottom:10px">' +
-        '<input type="password" id="passAnfitrion" placeholder="Tu contraseña" autocomplete="current-password">' +
+        '<input type="password" id="passAnfitrion" placeholder="Su contraseña" autocomplete="current-password">' +
       '</div>' +
       '<button class="btn btn-primario btn-bloque" id="btnReclamar">' +
         '<span class="material-symbols-rounded">shield_person</span> Reclamar anfitrión</button>')) return;
@@ -928,7 +934,7 @@ var Sala = (function () {
           '<div class="num" id="relojNum">–</div>' +
         '</div>' +
         '<p class="countdown-txt">' +
-          (yaAnote ? 'Tu producción ya está anotada.' : '¿Tenés producción para festejar?') +
+          (yaAnote ? 'Su producción ya está anotada.' : '¿Tiene producción para festejar?') +
         '</p>' +
       '</div>';
 
@@ -971,7 +977,7 @@ var Sala = (function () {
         '<span>Cámara encendida. ' +
         (S.asisFaltan != null ? 'Faltan ' + S.asisFaltan + ' min.' : 'Contando…') + '</span></div>'
       : '<p style="font-size:13px;color:var(--txt-dim)">' +
-        'Encendé la cámara y mantenela 5 minutos para que quede registrada tu asistencia.</p>';
+        'Encienda la cámara y manténgala 5 minutos para que quede registrada su asistencia.</p>';
   }
 
   /* ── acciones ──────────────────────────────────────────────────────── */
@@ -995,9 +1001,9 @@ var Sala = (function () {
   function reclamar() {
     var input = UI.id('passAnfitrion');
     var pass = input ? input.value : '';
-    if (!pass) { UI.toast('Escribí tu contraseña.', 'error'); return; }
+    if (!pass) { UI.toast('Escriba su contraseña.', 'error'); return; }
     accion({ accion: 'reclamarAnfitrion', token: Sesion.token, salaId: S.sala.id, password: pass },
-      function () { UI.toast('Tomaste la sala. Entrá a la videollamada para abrirla.', 'ok'); });
+      function () { UI.toast('Tomó la sala. Entre a la videollamada para abrirla.', 'ok'); });
   }
 
   function liberar() {
@@ -1040,7 +1046,7 @@ var Sala = (function () {
     if (S.modAvisado || !S.estado || !S.estado.soyAnfitrion) return;
     if (S.estado.anfitrion && S.estado.anfitrion.moderadorOk) return;
     S.modAvisado = true;
-    UI.toast('Jitsi todavía no te dio el control. Iniciá sesión en meet.jit.si con tu Google en otra pestaña.', 'error');
+    UI.toast('Jitsi todavía no le dio el control. Inicie sesión en meet.jit.si con su Google en otra pestaña.', 'error');
   }
 
   function alCambiarCamara(encendida) {
@@ -1268,7 +1274,7 @@ var App = (function () {
     // muestra el cascarón de la última sala (o vacío) y no sondea a nadie, lo que
     // se ve como un portal roto en vez de como un paso que falta.
     if (nombre === 'sala' && !Sala.activa()) {
-      UI.toast('Elegí primero una sala.', 'info');
+      UI.toast('Elija primero una sala.', 'info');
       nombre = 'dashboard';
     }
 

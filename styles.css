@@ -152,6 +152,9 @@ input::placeholder { color: var(--txt-mute); }
   color: var(--txt-dim);
 }
 .chip .material-symbols-rounded { font-size: 14px; }
+/* Sin esto, "SIN ABRIR" se parte en dos renglones dentro de la tarjeta de sala y
+   cada tarjeta queda de un alto distinto. */
+.chip { white-space: nowrap; flex: none; }
 .chip-verde { background: var(--verde-soft); border-color: rgba(16, 185, 129, 0.34); color: #6ee7b7; }
 .chip-azul  { background: var(--azul-soft);  border-color: rgba(59, 130, 246, 0.34); color: #93c5fd; }
 .chip-ambar { background: var(--ambar-soft); border-color: rgba(245, 158, 11, 0.34); color: #fcd34d; }
