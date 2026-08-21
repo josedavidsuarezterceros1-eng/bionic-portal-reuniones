@@ -1,0 +1,68 @@
+<svg version="1.2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+	<style>
+		.s0 { fill: #deba88 } 
+		.s1 { opacity: 1;fill: #f5dcb3 } 
+		.s2 { fill: #4b3423 } 
+		.s3 { fill: #d19152 } 
+		.s4 { opacity: 1;fill: #84603f } 
+		.s5 { fill: #d8ae76 } 
+		.s6 { fill: #351909 } 
+		.s7 { fill: #e9a254 } 
+		.s8 { fill: #f9c163 } 
+	</style>
+	<g id="Layer 1">
+		<g id="Background">
+			<path id="Path 6" fill-rule="evenodd" class="s0" d="m226 398l-1-4 3 4z"/>
+			<path id="Path 8" fill-rule="evenodd" class="s1" d="m310 106h-7l6-3z"/>
+			<path id="Path 9" fill-rule="evenodd" class="s1" d="m200 106l3-3 6 3z"/>
+			<path id="Path 10" fill-rule="evenodd" class="s2" d="m203 103l-8-4 29-6 21 5 11 9 13-10 22-4 26 6-8 4-6 3h7 10l14 5 17 16 10 4 11 15 1 16-3 11 11 11 8 15 4 13-2 5 8 26v19l-1 7-3-4-3 32-12 32-9 15-2 1-2-8-9 20-28 28-21 8-12 10-13 5-3-2 6-12-29 24-6-1-24-19-3-4 1 4 5 8-3 2-13-5-12-10-21-8-24-23-13-25-3 8-9-14-12-31-4-35-3 4-1-8 1-24 8-21h-3l1-8 9-21 13-14-3-23 5-12 10-9 7-2 14-14 13-6 12-1h9z"/>
+			<path id="Path 11" fill-rule="evenodd" class="s3" d="m299 335l3 19-9 27-16 18-19 12v-30l3-6 19-15-5 20v3l3-2 7-14 2-13zm-87 0l13 18 3 17 7 12 3 2v-2l-6-22 12 7 10 13v31l-27-20-15-26-2-13z"/>
+			<path id="Path 12" fill-rule="evenodd" class="s4" d="m199 311l5 1 4 11-2 36 12 38-6-1-11-10-13-26v-26zm111-1l5 2 8 18 1 30-12 25-12 11-7 1 13-38-2-36z"/>
+			<path id="Path 13" fill-rule="evenodd" class="s1" d="m264 309l18 7 7-1 1 14-4 6-4-7-2 9-8 8-1-16-4 13-10 10-12-10-4-13 1 16-9-7-3-10-4 7-4-6 1-14 6 1 18-7 1 3h14z"/>
+			<path id="Path 14" fill-rule="evenodd" class="s0" d="m247 309l15-2 2 2-2 3h-14z"/>
+			<path id="Path 15" fill-rule="evenodd" class="s5" d="m278 309l2-4 9-1 1-7 6 1 4 5-6 6-4 2zm-61-11l5-1 1 7 11 1 2 3-14 3-10-11z"/>
+			<path id="Path 16" fill-rule="evenodd" class="s4" d="m296 297v-1h2v1z"/>
+			<path id="Path 17" fill-rule="evenodd" class="s6" d="m290 297l6-1v1 1zm-73 1v-2l5 1z"/>
+			<path id="Path 18" fill-rule="evenodd" class="s4" d="m211 298l6-2v2l-5 2z"/>
+			<path id="Path 19" fill-rule="evenodd" class="s3" d="m298 296l6-3-1 4 7 3v1l-12-4z"/>
+			<path id="Path 20" fill-rule="evenodd" class="s6" d="m254 296v-6h4v6z"/>
+			<path id="Path 21" fill-rule="evenodd" class="s4" d="m302 290l-13-1 13-1zm-92-2l1-1 12 2-14 1z"/>
+			<path id="Path 22" fill-rule="evenodd" class="s3" d="m210 288l-9 1 6-4 4 2z"/>
+			<path id="Path 23" fill-rule="evenodd" class="s4" d="m292 280l-8 2 2-3zm-72 0h7l1 2z"/>
+			<path id="Path 24" fill-rule="evenodd" class="s7" d="m320 279v-2l5 1v2l22 30 5 31-10 27-11 11-13 6 8-15 4-20-2-19-10-21 5-1-13-8v-1h3l3-8 11 3-13-5 3-1z"/>
+			<path id="Path 25" fill-rule="evenodd" class="s2" d="m294 280l10-3 16 2-3 10-3 1 13 5-11-3-3 8h-3l-7-3 1-4-2-3v-2h6l-3-1v-7zm-99-2l13-1 10 3-10-1-1 6-6 4 9-1-1 2v7l-10 3-2-7-9 1 11-4-7-9z"/>
+			<path id="Path 26" fill-rule="evenodd" class="s7" d="m187 278l8-1v1l-3 3 7 9-11 4 9-1 2 7 10-3v1l-22 11 8-1-12 28v22l4 14 8 13-11-4-16-16-8-26 5-29 19-27z"/>
+			<path id="Path 27" fill-rule="evenodd" class="s1" d="m258 290l10-12 14-8 2-7h3l-1 16-2 3 8-2h2 11v7l3 1h-6l-13 1 13 1 2 3-6 3h-2l-6 1-1 7-9 1-2 4-15-7-5-6z"/>
+			<path id="Path 28" fill-rule="evenodd" class="s4" d="m254 265l12-2 2 5-5 4-4 11-7-1-4-9v-6z"/>
+			<path id="Path 29" fill-rule="evenodd" class="s1" d="m227 280l-3-14 4-3 2 7 16 9 8 11v6l-5 6-13 6-2-3-11-1-1-7-5-1-6 2h-2v-1-7l14-1-12-2-4-2 1-6 10 1h2l8 2z"/>
+			<path id="Path 30" fill-rule="evenodd" class="s4" d="m225 295l6 2-6 1z"/>
+			<path id="Path 31" fill-rule="evenodd" class="s2" d="m301 263l2-1 4 10v4h-3zm-73 0l7 4 4-4 15 2-6 2v6l4 9 7 1 4-11 5-4-2-5h7l5 4 6-4-2 7-14 8-10 12h-4l-8-11-16-9z"/>
+			<path id="Path 32" fill-rule="evenodd" class="s4" d="m325 278l2-2-4-5 3-9 5-1 24 20 10 22 1 23-5 16-5 1v-18l-4-15-13-22-7-7-7-1zm-141 5h-6l-5 5-12 20-6 34-5-2-4-14v-18l8-22 16-18 11-7 6 3 1 10-3 4h2z"/>
+			<path id="Path 33" fill-rule="evenodd" class="s1" d="m239 263l4-5h26l4 5h-7l-12 2z"/>
+			<path id="Path 34" fill-rule="evenodd" class="s3" d="m190 260h10l2-4 9 2-6 14v4h3v1l-13 1v-1l6-2zm112-2l7-3 3 5h10l-11 15 9 2v2l-16-2v-1h3v-4l-4-10z"/>
+			<path id="Path 35" fill-rule="evenodd" class="s4" d="m301 263l-4-11 5 6 1 4z"/>
+			<path id="Path 36" fill-rule="evenodd" class="s2" d="m211 258l2-5 3-2v2l-8 23h-3v-4z"/>
+			<path id="Path 37" fill-rule="evenodd" class="s5" d="m335 235l19 10 13 13 10 17 4 16-1 24-8 16-1-22-8-24-16-19-17-10zm-159 0l6 21-17 10-16 19-8 24-1 22-5-7-4-16 1-23 8-20 17-19z"/>
+			<path id="Path 38" fill-rule="evenodd" class="s7" d="m334 209l27 10 17 15 11 22 2 21-5 20-5-24-11-19-15-14-19-9zm-159 0h3l-2 22-20 10-13 12-12 20-4 23-2 1-4-19 3-25 10-19 17-15zm-21 3l-22 17-14 22 1-16 8-21 12-13 15-8-2 18zm206 1l-4-22 17 10 10 10 11 29-1 10-12-20z"/>
+			<path id="Path 39" fill-rule="evenodd" class="s3" d="m257 184l5 2v8l-4 4h-5l-3-4v-8l5-2z"/>
+			<path id="Path 40" fill-rule="evenodd" class="s4" d="m367 178l13 13 3 11-22-13zm-224 0l4 2 4 9-21 12 1-8z"/>
+			<path id="Path 41" fill-rule="evenodd" class="s3" d="m346 207l-13-3-15-21-3-9 15 4v6l14 15zm-163-29l14-4-2 8-16 22-13 3 5-12 13-13zm77-16l-1 3v-3z"/>
+			<path id="Path 42" fill-rule="evenodd" class="s8" d="m330 178l-8-7-11-2-6-8 5-2 18 6 28 26 4 22-14-6-2-8-14-15zm-176 15l27-26 26-8-6 10-15 4-5 4 2 1 1 4-13 13-5 12-12 5-2-1zm36 67l-8-20-1-24 6-18 12-14 9-19 13-9h16l12 10 6 18-5 2v8l3 4h5l4-4v-8l-5-2 6-18 9-9 15-2 16 9 10 20 12 14 6 17-1 25-8 20h-10l-3-5-7 3-5-6 4 11 3 13v1l-10 3h-2l-6-1 1-16h-3l-6 4-5-4-4-5h-26l-4 5-4 4-7-4-4 3 3 14h-7-2l-10-3v-1l8-23v-2l-3 2-2 5-9-2-2 4z"/>
+			<path id="Path 43" fill-rule="evenodd" class="s1" d="m284 229l3-7 13-2 6-8h4l-5 11-11 3-4 5zm-56 0l-6 2-4-5-9-2-6-6-1-6h4l8 9h10z"/>
+			<path id="Path 44" fill-rule="evenodd" class="s2" d="m284 229l-3 3 1-14 5-11 13-3 15 5-5 3h-4l-6 8-13 2z"/>
+			<path id="Path 45" fill-rule="evenodd" class="s4" d="m298 211h3v4l-3 3-9-1v-3h7z"/>
+			<path id="Path 46" fill-rule="evenodd" class="s2" d="m210 205h11l8 9 2 17-3-2-4-8h-10l-8-9h-4l-5-3z"/>
+			<path id="Path 47" fill-rule="evenodd" class="s4" d="m214 208l4 5 6-1v4l-10 2-3-3z"/>
+			<path id="Path 48" fill-rule="evenodd" class="s7" d="m210 205l3-7h13l5 7 6 2-2 6-6 1-8-9z"/>
+			<path id="Path 49" fill-rule="evenodd" class="s3" d="m321 157l18-16 17 1 6 8v17l-9 15-7-6 4-10-3-13h4v-3h-11l-13 10zm-162 25l-9-16v-16l5-7 5-3 13 1 18 16-7 2-9-8h-15l5 2-3 13 4 10z"/>
+			<path id="Path 50" fill-rule="evenodd" class="s8" d="m321 157l-13-4 17-18 22-5 12 5 9 14v15l-10 20-3 1-2-3 9-15v-17l-6-8-17-1zm-162 25l-4 3-11-21v-15l9-14 11-5h10l13 5 17 18-13 4-18-16-13-1-5 3-5 7v16z"/>
+			<path id="Path 51" fill-rule="evenodd" class="s4" d="m206 126l-2-2 3 1z"/>
+			<path id="Path 52" fill-rule="evenodd" class="s3" d="m308 124l22-4 2-4 11 10-22 6-14 13-6 10-10-3v-6l7-13z"/>
+			<path id="Path 53" fill-rule="evenodd" class="s4" d="m251 127l-5-11 7 8 1 3z"/>
+			<path id="Path 54" fill-rule="evenodd" class="s3" d="m206 126l8 7 7 14v5l-10 3-20-23-14-6h-8l11-10 3 4 21 4z"/>
+			<path id="Path 55" fill-rule="evenodd" class="s5" d="m308 124l-16 10-8 17-12 1v-5l6-18 11-12 17-7 15 1 11 5-2 4zm-128-8l15-6h11l17 7 11 12 6 18v5l-12-1-8-17-13-9-3-1-21-4z"/>
+			<path id="Path 56" fill-rule="evenodd" class="s8" d="m256 114l7-8 14-7 26 1-28 25-6 14-2 17-7 6h-1v-19l-5-16-1-3 3-2z"/>
+			<path id="Path 57" fill-rule="evenodd" class="s7" d="m251 127l3 12-2 25-7-8-2-17-6-14-28-25 25-1 15 7 7 8v8l-3 2-7-8z"/>
+		</g>
+	</g>
+</svg>

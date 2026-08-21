@@ -1152,7 +1152,7 @@ var Dashboard = (function () {
    * El mapa es del FRONTEND a propósito: la portada es identidad visual, no un dato
    * del negocio, y no tiene por qué viajar en cada respuesta del servidor.
    */
-  var PORTADA = { sirari: 'img/sirari.jpg', leones: 'img/leones.jpg', jaguares: 'img/jaguares.jpg' };
+  var PORTADA = { sirari: 'img/sirari.svg', leones: 'img/leones.svg', jaguares: 'img/jaguares.svg' };
 
   function pintar(salas) {
     var cont = UI.id('grillaSalas');
@@ -1189,10 +1189,26 @@ var Dashboard = (function () {
       c.onclick = function () { App.irASala(c.getAttribute('data-sala')); };
     });
 
-    // Si una portada no carga, se saca en vez de dejar el ícono de imagen rota:
-    // la tarjeta se ve bien igual con su fondo, y nadie nota que faltaba algo.
+    /*
+     * Si una portada no carga: primero se prueba el PNG, y si tampoco, se saca.
+     *
+     * Los emblemas van en SVG —vector, la mitad de peso y filoso proyectado en la
+     * pared—, y el PNG queda al lado como red. Que un navegador raro del equipo no
+     * dibuje un SVG es improbable, pero el costo de cubrirlo son dos líneas y el
+     * costo de NO cubrirlo es una tarjeta sin escudo proyectada en la reunión.
+     * Sacarla del todo es mejor que dejar el ícono de imagen rota: la tarjeta se
+     * ve bien igual con su fondo y nadie nota que faltaba algo.
+     */
     Array.prototype.forEach.call(cont.querySelectorAll('.sala-portada img'), function (im) {
-      im.onerror = function () { im.remove(); };
+      im.onerror = function () {
+        if (im.getAttribute('data-respaldo')) { im.remove(); return; }
+        im.setAttribute('data-respaldo', '1');
+        // Sin expresión regular a propósito: sabemos que la ruta termina en '.svg',
+        // y una regex acá ya se escribió mal dos veces al pasar el parche por el
+        // shell (quedó /.svg$/, con el punto sin escapar). Cortar los 4 caracteres
+        // finales no tiene forma de salir mal.
+        im.src = im.src.slice(0, -4) + '.png';
+      };
     });
   }
 

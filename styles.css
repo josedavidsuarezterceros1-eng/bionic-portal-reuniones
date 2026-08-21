@@ -365,7 +365,7 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
   position: absolute; inset: 0;
   width: 100%; height: 100%;
   object-fit: contain;
-  padding: var(--sp-4);
+  padding: var(--sp-2);   /* poco margen: el emblema es el protagonista de la tarjeta */
   transition: transform var(--t-medio);
 }
 .sala-card:hover .sala-portada img { transform: scale(1.05); }
