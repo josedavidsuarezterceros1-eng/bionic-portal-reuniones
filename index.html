@@ -21,8 +21,10 @@
   no se cae entera porque un CDN esté lento.
 -->
 <script defer src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
-<script defer src="https://meet.jit.si/external_api.js"></script>
-<script defer src="app.js?v=81c011c2"></script>
+<!-- El External API se sirve desde JaaS, NO desde meet.jit.si: el de allá corta
+     las llamadas incrustadas a los 5 minutos (probado en ago 2026). -->
+<script defer src="https://8x8.vc/external_api.js"></script>
+<script defer src="app.js?v=7ae9dba2"></script>
 </head>
 <body>
 
@@ -188,7 +190,7 @@
          Sin pestaña en la barra: se llega solo poniendo #config en la dirección.
 
          🔴 No es un secreto, es que NO ES UNA PANTALLA DEL EQUIPO. La dirección del
-         backend ya viene puesta en app.js?v=81c011c2, así que nadie del equipo necesita tocar
+         backend ya viene puesta en app.js?v=7ae9dba2, así que nadie del equipo necesita tocar
          nada acá; y un director no tiene por qué ver las tripas de cómo está
          programado el CRM. Cuando la empresa tenga directores que no programan,
          esta pantalla sería ruido que invita a romper algo.

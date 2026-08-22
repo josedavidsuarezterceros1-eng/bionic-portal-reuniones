@@ -505,15 +505,28 @@ var Jitsi = (function () {
 
   function disponible() { return typeof window.JitsiMeetExternalAPI === 'function'; }
 
-  function montar(sala, usuario) {
-    if (salaMontada === sala.roomCode && api) return;
+  /*
+   * 🔴 La sala se monta con un PERMISO firmado por el servidor, no sola.
+   *
+   * Con JaaS, quien entra tiene que traer un permiso (un JWT) que el backend firma
+   * con la clave privada de la empresa. Eso trae dos cosas que con meet.jit.si eran
+   * imposibles: el moderador lo decide el PORTAL —según el gate de cargo contra la
+   * hoja Ejecutivos— y el permiso vale para UNA sala, no para todas.
+   *
+   * Por eso `montar` recibe `entrada`, que es lo que devolvió `videoEntrada` del
+   * backend: el dominio, el nombre completo de la sala (con el App ID adelante) y
+   * el permiso firmado.
+   */
+  function montar(entrada, usuario) {
+    if (salaMontada === entrada.sala && api) return;
     desmontar();
 
     var cont = UI.id('jitsiCont');
     if (!cont || !disponible()) return;
 
     var opciones = {
-      roomName: sala.roomCode,
+      roomName: entrada.sala,
+      jwt: entrada.jwt,
       width: '100%',
       height: '100%',
       parentNode: cont,
@@ -541,10 +554,10 @@ var Jitsi = (function () {
       }
     };
 
-    try { api = new window.JitsiMeetExternalAPI('meet.jit.si', opciones); }
+    try { api = new window.JitsiMeetExternalAPI(entrada.dominio, opciones); }
     catch (e) { api = null; return; }
 
-    salaMontada = sala.roomCode;
+    salaMontada = entrada.sala;
 
     try {
       var iframe = api.getIFrame();
@@ -559,11 +572,14 @@ var Jitsi = (function () {
     /*
      * 🔴 Acá se decide si la sala se abre para todos.
      *
-     * Ser anfitrión en el portal NO te hace moderador en Jitsi: Jitsi gratuito
-     * exige que quien abre la sala haya iniciado sesión con su cuenta de Google.
-     * Si el portal destapara el video porque alguien apretó el botón, los demás
-     * caerían en "esperando al moderador" sin ningún error a la vista y sin
-     * saber a quién reclamarle. Por eso se espera el HECHO, que es este evento.
+     * Se espera el HECHO, no la intención.
+     *
+     * Con JaaS el permiso de entrada ya viene firmado diciendo quién es moderador,
+     * así que este evento llega solo y al instante — el anfitrión ya no tiene que
+     * iniciar sesión en ningún lado. Aun así el portal NO destapa el video porque
+     * alguien apretó el botón: si por lo que fuera el permiso no llegara a valer
+     * (clave vencida, sala mal armada), los demás caerían en "esperando al
+     * moderador" sin ningún error a la vista y sin saber a quién reclamarle.
      */
     api.addEventListener('participantRoleChanged', function (ev) {
       if (!ev || ev.id !== miId) return;
@@ -579,8 +595,8 @@ var Jitsi = (function () {
       Sala.alCambiarCamara(false);
     });
 
-    // Si en un rato largo no llegó el rol de moderador, es casi seguro que falta
-    // la sesión de Google. Se explica en vez de dejar la sala trabada en silencio.
+    // Si en un rato largo no llegó el rol de moderador, el permiso firmado no fue
+    // aceptado. Se avisa en vez de dejar la sala trabada en silencio.
     clearTimeout(avisoModTimer);
     avisoModTimer = setTimeout(function () { Sala.avisarModeradorDemorado(); }, Cfg.MOD_AVISO_MS);
   }
@@ -742,13 +758,41 @@ var Sala = (function () {
     // El video se monta si la sala ya está abierta, o si soy yo el anfitrión que
     // todavía tiene que abrirla (necesito entrar para que Jitsi me dé moderador).
     if (r.sala.abierta || r.soyAnfitrion) {
-      Jitsi.montar(r.sala, Sesion.usuario);
+      pedirEntradaYMontar();
     } else {
       Jitsi.desmontar();
     }
 
     detectarDestape(r.ronda);
     render();
+  }
+
+  /*
+   * Pide el permiso de entrada al servidor y monta la videollamada.
+   *
+   * ⚠️ Se pide UNA sola vez por sala, no en cada sondeo: el permiso se firma con
+   * la clave privada de la empresa y pedirlo cada 2 segundos sería hacer trabajar
+   * al servidor —y a la firma RSA— para nada. Si la sala ya está montada, `montar`
+   * corta solo.
+   *
+   * Si el permiso no se puede firmar (falta una propiedad en el script, la clave
+   * está en un formato que no acepta), el mensaje del servidor se muestra tal cual.
+   * Sin eso el síntoma sería una pantalla negra sin explicación.
+   */
+  var pidiendoEntrada = false;
+
+  function pedirEntradaYMontar() {
+    if (Jitsi.montada() || pidiendoEntrada || !S.sala) return;
+    pidiendoEntrada = true;
+    API.get({ accion: 'videoEntrada', token: Sesion.token, salaId: S.sala.id })
+      .then(function (r) {
+        if (!S.sala) return;
+        if (!r || !r.ok) { UI.toast((r && r.message) || 'No se pudo abrir la videollamada.', 'error'); return; }
+        Jitsi.montar(r, Sesion.usuario);
+        render();
+      })
+      .catch(function (e) { if (S.sala) UI.toast(e.message || 'No se pudo abrir la videollamada.', 'error'); })
+      .then(function () { pidiendoEntrada = false; });
   }
 
   /**
@@ -888,8 +932,7 @@ var Sala = (function () {
         '</div>' +
         (mod ? '' :
           '<p style="font-size:12.5px;color:var(--txt-dim);margin-bottom:12px">' +
-          'Si Jitsi no le da el control, abra <strong>meet.jit.si</strong> en otra pestaña e inicie ' +
-          'sesión con su cuenta de Google. Se hace una sola vez por navegador.</p>') +
+          'Si tarda en abrir, recargue la página.</p>') +
         '<button class="btn btn-peligro btn-bloque" id="btnLiberar">' +
           '<span class="material-symbols-rounded">logout</span> Liberar la sala</button>')) return;
       UI.id('btnLiberar').onclick = liberar;
@@ -1064,7 +1107,7 @@ var Sala = (function () {
     var pass = input ? input.value : '';
     if (!pass) { UI.toast('Escriba su contraseña.', 'error'); return; }
     accion({ accion: 'reclamarAnfitrion', token: Sesion.token, salaId: S.sala.id, password: pass },
-      function () { UI.toast('Tomó la sala. Entre a la videollamada para abrirla.', 'ok'); });
+      function () { UI.toast('Tomó la sala.', 'ok'); });
   }
 
   function liberar() {
@@ -1107,7 +1150,7 @@ var Sala = (function () {
     if (S.modAvisado || !S.estado || !S.estado.soyAnfitrion) return;
     if (S.estado.anfitrion && S.estado.anfitrion.moderadorOk) return;
     S.modAvisado = true;
-    UI.toast('Jitsi todavía no le dio el control. Inicie sesión en meet.jit.si con su Google en otra pestaña.', 'error');
+    UI.toast('La videollamada no terminó de abrir. Pruebe recargando la página.', 'error');
   }
 
   function alCambiarCamara(encendida) {
