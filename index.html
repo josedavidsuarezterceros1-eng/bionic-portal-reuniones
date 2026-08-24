@@ -9,7 +9,34 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
+<!--
+  🔴 `icon_names` NO ES OPCIONAL. Sin esa lista, esta línea baja 5,3 MB.
+
+  Google sirve Material Symbols como fuente variable con los ~3.000 iconos
+  adentro: 5.347.060 bytes medidos en ago 2026, contra 54.372 con la lista. El
+  98 % del peso de la página era esto — para comparar, TODO el resto (app.js?v=a9bd59bb,
+  styles.css?v=519e5a86, las dos fuentes de texto y el confeti) suma unos 180 KB.
+
+  Y no se ve como "la página pesa": se ve como que los BOTONES TARDAN. Los
+  iconos son ligaduras de esta fuente, así que hasta que baja, cada botón queda
+  con un hueco donde va su icono. En la oficina eso se lee como "el portal está
+  lento", nunca como "falta una fuente".
+
+  ⚠️ Al agregar un icono nuevo al portal hay que agregarlo TAMBIÉN a esta lista.
+  Si falta, la fuente no trae esa ligadura y en pantalla aparece la PALABRA
+  literal — un botón que dice "workspace_premium" en vez del trofeo. Se ve al
+  instante, pero solo si alguien mira esa pantalla: hay un check que los recorre
+  todos en `verify-frontend.mjs`.
+
+  Los ejes (opsz, wght, FILL, GRAD) se dejan COMPLETOS a propósito: `styles.css?v=519e5a86`
+  usa FILL 0 y FILL 1, y recortarlos ganaría poco sobre 54 KB a cambio de romper
+  el estilo de forma difícil de rastrear.
+
+  `display=block` es lo correcto para una fuente de iconos: con `swap` el
+  navegador dibujaría la ligadura con la fuente de respaldo y se vería el nombre
+  del icono escrito hasta que llegue la buena.
+-->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=arrow_back,arrow_forward,campaign,celebration,check_circle,emoji_events,error,event_busy,fact_check,grid_view,groups,hourglass_top,how_to_reg,info,lock_clock,login,logout,manage_accounts,network_check,refresh,save,savings,settings,shield_person,sync,verified,videocam,volume_up,workspace_premium&display=block" rel="stylesheet">
 
 <link rel="stylesheet" href="styles.css?v=519e5a86">
 
