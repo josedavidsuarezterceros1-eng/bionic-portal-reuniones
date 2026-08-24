@@ -13,9 +13,11 @@
   🔴 `icon_names` NO ES OPCIONAL. Sin esa lista, esta línea baja 5,3 MB.
 
   Google sirve Material Symbols como fuente variable con los ~3.000 iconos
-  adentro: 5.347.060 bytes medidos en ago 2026, contra 54.372 con la lista. El
-  98 % del peso de la página era esto — para comparar, TODO el resto (app.js?v=a9bd59bb,
-  styles.css?v=519e5a86, las dos fuentes de texto y el confeti) suma unos 180 KB.
+  adentro: 5.347.060 bytes medidos en ago 2026. Con la lista baja a entre 11 KB
+  y 54 KB según el subconjunto que negocie el navegador — en producción se
+  midieron 11.228 bytes. O sea que esto era el ~98 % del peso de la página: TODO
+  el resto junto (app.js?v=a9bd59bb, styles.css?v=519e5a86, las dos fuentes de texto y el confeti) son
+  unos 210 KB.
 
   Y no se ve como "la página pesa": se ve como que los BOTONES TARDAN. Los
   iconos son ligaduras de esta fuente, así que hasta que baja, cada botón queda
