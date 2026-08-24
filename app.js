@@ -85,15 +85,72 @@ var API = (function () {
    * ⚠️ Si alguien lo "corrige" a application/json, el portal deja de funcionar
    * entero desde el navegador y sigue andando perfecto desde curl o Postman.
    */
+  /*
+   * ══════════════════════════════════════════════════════════════════════════
+   * 🔴 El transporte de Apps Script es de UN SOLO USO. Por eso hay reintentos.
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * `/exec` no devuelve datos: devuelve un 302 a
+   * `script.googleusercontent.com/macros/echo?user_content_key=…`, y esa clave se
+   * CONSUME en la primera lectura (comprobado contra el backend de producción:
+   * primera lectura 200, segunda 302 y después 404).
+   *
+   * Si el navegador pide esa URL dos veces —reintento silencioso de conexión, la
+   * carrera QUIC/TCP de Chrome la primera vez que habla con ese host, la pestaña
+   * ocupada montando Jitsi— la segunda llega con la clave gastada y sale un 404.
+   * No es un fallo del portal ni del despliegue: es cómo funciona Apps Script, y
+   * pasa MÁS AL PRINCIPIO, que es cuando la conexión todavía se está armando.
+   *
+   * Sin esto el síntoma era: recargar la página tiraba la sesión guardada a la
+   * pantalla de login sin ningún mensaje, y el intento siguiente acusaba al
+   * despliegue con un cartel rojo que no tenía nada que ver.
+   */
+  var REINTENTOS = 2;
+  var ESPERA_MS  = [400, 1200];
+
+  /*
+   * 🔴 Qué se puede reintentar y qué NO.
+   *
+   * Cuando el navegador ve el 404, EL BACKEND YA CORRIÓ. Repetir la llamada la
+   * ejecuta de nuevo. Los GET son todos de lectura, así que van todos. Los POST
+   * escriben, y solo entran los que repetir NO CAMBIA NADA OBSERVABLE:
+   *
+   *   · login            — repetir emite un segundo token y nada más. El contador
+   *                        de intentos fallidos no se infla: una contraseña mala
+   *                        vuelve HTTP 200 con {ok:false}, que no es un fallo
+   *                        transitorio y por lo tanto no se reintenta.
+   *   · pingAsistencia   — `pingAsistencia_` descarta los latidos separados por
+   *                        menos de 51 s (ASIS_PING_MS * 0.85), así que el
+   *                        reintento es un no-op por construcción del backend.
+   *   · confirmarModerador — pone un booleano en su valor final (idempotente). Lo
+   *                        único que repite es una fila del registro de anfitrión,
+   *                        que el propio backend documenta como "registro, no
+   *                        estado". Ese costo es NADA al lado de lo que evita: si
+   *                        esta llamada se pierde, la sala NO SE ABRE PARA NADIE y
+   *                        toda la filial queda esperando al moderador.
+   *
+   * ⚠️ `registrarProduccion` NO está y no puede estar: un reintento anotaría la
+   * matrícula DOS VECES en pleno festejo, y nadie lo notaría hasta cuadrar los
+   * números. Tampoco `iniciarRonda` ni `reclamarAnfitrion`. Los tres fallan a la
+   * vista (toast rojo) y con el botón ahí para volver a apretar.
+   *
+   * La lista corta es a propósito: cada entrada es una promesa de que repetir es
+   * inofensivo. Antes de agregar una, hay que poder escribir el porqué acá.
+   */
+  var POST_REPETIBLE = { login: true, pingAsistencia: true, confirmarModerador: true };
+
   function post(data) {
     var url = Cfg.url();
     if (!url) return Promise.reject(new Error('Falta configurar la dirección del backend.'));
-    return fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(data),
-      redirect: 'follow'
-    }).then(leer);
+    var repetible = !!(data && POST_REPETIBLE[data.accion]);
+    return conReintento(function () {
+      return pedir(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(data),
+        redirect: 'follow'
+      });
+    }, repetible);
   }
 
   function get(params) {
@@ -103,10 +160,54 @@ var API = (function () {
       .filter(function (k) { return params[k] !== undefined && params[k] !== null; })
       .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); })
       .join('&');
-    return fetch(url + '?' + qs, { method: 'GET', redirect: 'follow' }).then(leer);
+    // Todas las acciones GET del backend son de lectura: reintentar es gratis.
+    return conReintento(function () {
+      return pedir(url + '?' + qs, { method: 'GET', redirect: 'follow' });
+    }, true);
   }
 
+  /**
+   * Una petición, con el fallo de red convertido en error marcado.
+   *
+   * ⚠️ El segundo argumento de `.then` atrapa SOLO el rechazo de `fetch` (red
+   * caída, CORS), nunca lo que lance `leer`. Con un `.catch` encadenado se
+   * tragaría también la sesión vencida y el reintento la repetiría al pedo.
+   */
+  function pedir(url, opciones) {
+    return fetch(url, opciones).then(leer, function () {
+      throw transitorio_(new Error('No se pudo contactar con el servidor. Revise la conexión.'));
+    });
+  }
+
+  /**
+   * Reintenta solo lo que se marcó como transitorio, y solo si repetirlo es
+   * seguro. Un error de negocio o de sesión sale derecho, sin esperas inútiles.
+   */
+  function conReintento(hacer, repetible) {
+    function intento(n) {
+      return hacer().catch(function (e) {
+        if (!repetible || !e || !e.transitorio || n >= REINTENTOS) throw e;
+        return new Promise(function (listo) { setTimeout(listo, ESPERA_MS[n]); })
+          .then(function () { return intento(n + 1); });
+      });
+    }
+    return intento(0);
+  }
+
+  function transitorio_(e) { e.transitorio = true; return e; }
+
+  /**
+   * 🔴 El STATUS se mira ANTES que el cuerpo.
+   *
+   * Mientras no se miraba, un 404 entraba como texto, `JSON.parse` fallaba, y como
+   * el cuerpo del 404 de Google ES HTML se disparaba la rama de abajo: el usuario
+   * veía "se publicó con acceso restringido" y salía a revisar un despliegue que
+   * estaba perfecto. El mensaje de acceso restringido vale solo con HTTP 200,
+   * que es como llega de verdad el HTML del login de Google.
+   */
   function leer(res) {
+    if (!res.ok) throw errorHttp_(res.status);
+
     return res.text().then(function (txt) {
       var r;
       try {
@@ -126,6 +227,23 @@ var API = (function () {
       Reloj.sincronizar(r);
       return r;
     });
+  }
+
+  /**
+   * El mensaje es el que la persona ve DESPUÉS de que los reintentos se agotaron,
+   * así que no dice "reintentando": dice qué pasó y qué hacer.
+   */
+  function errorHttp_(status) {
+    if (status === 404) {
+      return transitorio_(new Error('Google no entregó la respuesta (404). Suele ser pasajero: vuelva a intentar.'));
+    }
+    if (status === 429) {
+      return transitorio_(new Error('El servidor está saturado. Espere unos segundos y vuelva a intentar.'));
+    }
+    if (status >= 500) {
+      return transitorio_(new Error('El servidor de Google falló (' + status + '). Vuelva a intentar.'));
+    }
+    return new Error('El servidor respondió ' + status + '.');
   }
 
   return { post: post, get: get };
@@ -647,6 +765,14 @@ var Sala = (function () {
     S.registreEn = null;
     S.ultimoDestape = null;
     S.modAvisado = false;
+    // ⚠️ Igual que `asisValidada`: el rol de moderador es POR SALA. Sin este reset,
+    // quien pasa de una sala a otra arrastra el "Jitsi ya me dio moderador" de la
+    // anterior y el sondeo empieza a reintentar la apertura de una sala en la que
+    // todavía no entró — un POST cada 3,5 s que nadie pidió.
+    S.soyModeradorJitsi = false;
+    S.modConfirmado = false;
+    S.modRechazado = false;
+    S.modEnviando = false;
     // ⚠️ La asistencia se cuenta POR SALA. Sin este reset, quien pasa de una sala
     // a otra arrastra el "ya validada" de la anterior y su asistencia a la segunda
     // reunión no se registra nunca — sin ningún error a la vista.
@@ -762,6 +888,11 @@ var Sala = (function () {
     } else {
       Jitsi.desmontar();
     }
+
+    // Red de seguridad de la apertura de sala: ver el comentario de
+    // `confirmarModeradorEnServidor`. Si la confirmación se perdió, esto la
+    // reintenta hasta que el servidor diga que la sala está abierta.
+    if (S.soyModeradorJitsi && r.soyAnfitrion && !r.sala.abierta) confirmarModeradorEnServidor();
 
     detectarDestape(r.ronda);
     render();
@@ -1139,11 +1270,53 @@ var Sala = (function () {
     if (!S.estado || !S.estado.soyAnfitrion) return;
     if (!esModerador) return;
     S.modAvisado = true;
+    S.soyModeradorJitsi = true;
+    confirmarModeradorEnServidor();
+  }
+
+  /*
+   * ══════════════════════════════════════════════════════════════════════════
+   * 🔴 Si esta confirmación se pierde, LA SALA NO SE ABRE PARA NADIE.
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * `abierta` es exactamente `moderadorOk` del anfitrión (ver `estadoSala_`), y
+   * eso solo lo pone esta llamada. Jitsi dispara `participantRoleChanged` UNA vez,
+   * así que si el POST se perdía no había nada que lo volviera a intentar: toda la
+   * filial se quedaba en "esperando al moderador" y el anfitrión no veía ningún
+   * error — el `.catch` estaba VACÍO. Con el 404 del transporte de Apps Script
+   * pasando justo en el momento de entrar a la videollamada, esto no era teórico.
+   *
+   * Ahora se cura solo: mientras Jitsi me dé moderador, yo sea el anfitrión y el
+   * servidor siga diciendo que la sala está cerrada, cada sondeo lo reintenta.
+   * Repetirlo es inofensivo (pone un booleano en su valor final).
+   *
+   * Los tres frenos son distintos a propósito:
+   *   · confirmado → listo, no se toca más.
+   *   · rechazado  → el servidor dijo que no (no soy el anfitrión). Reintentarlo
+   *                  cada 2 s no lo va a convencer, y llenaría la pantalla.
+   *   · enviando   → una sola en vuelo, como el sondeo.
+   *
+   * El fallo de TRANSPORTE no avisa acá: el sondeo que corre en paralelo ya pinta
+   * "Error de conexión" una vez, y el próximo intento sale solo en 2-3,5 s. Avisar
+   * también acá sería el segundo cartel rojo por el mismo problema.
+   */
+  function confirmarModeradorEnServidor() {
+    if (!S.sala || S.modEnviando || S.modConfirmado || S.modRechazado) return;
+    S.modEnviando = true;
     API.post({ accion: 'confirmarModerador', token: Sesion.token, salaId: S.sala.id, esModerador: true })
       .then(function (r) {
-        if (r && r.ok) { UI.toast('Sala abierta para todos.', 'ok'); pollYa(); }
+        if (!S.sala) return;
+        if (r && r.ok) {
+          S.modConfirmado = true;
+          UI.toast('Sala abierta para todos.', 'ok');
+          pollYa();
+          return;
+        }
+        S.modRechazado = true;
+        UI.toast((r && r.message) || 'El servidor no aceptó abrir la sala.', 'error');
       })
-      .catch(function () {});
+      .catch(function () { /* transporte: lo reintenta el próximo sondeo */ })
+      .then(function () { S.modEnviando = false; });
   }
 
   function avisarModeradorDemorado() {
@@ -1519,7 +1692,27 @@ var App = (function () {
         if (r && r.ok) entrarApp(r.usuario);
         else mostrarLogin('');
       })
-      .catch(function () { mostrarLogin(''); });
+      /*
+       * 🔴 Un fallo de RED acá NO es una sesión vencida, y decirlo importa.
+       *
+       * Esto es la PRIMERA llamada después de cargar la página — justo donde más
+       * pega el 404 del transporte de Apps Script (ver el comentario largo en API).
+       * Mientras el catch mandaba a `mostrarLogin('')` a secas, un 404 tiraba la
+       * sesión guardada a la pantalla de login SIN NINGÚN MENSAJE: la persona
+       * escribía la contraseña de nuevo creyendo que se le había vencido. Ese era
+       * el "al principio cuesta ingresar".
+       *
+       * El token NO se borra —`mostrarLogin` no limpia la sesión—, así que recargar
+       * vuelve a entrar solo. Por eso el mensaje dice recargar y no reingresar.
+       */
+      .catch(function (e) {
+        // Si la sesión venció DE VERDAD, `Sesion.caida()` ya pintó el login con su
+        // propio mensaje y borró el token. Pisarlo sería mentirle a la persona.
+        if (!Sesion.token) return;
+        mostrarLogin(e && e.transitorio
+          ? 'No se pudo contactar con el servidor. Su sesión sigue guardada: recargue la página en unos segundos.'
+          : 'No se pudo verificar la sesión. Ingrese de nuevo.');
+      });
   }
 
   /** Muestra la pantalla técnica, con o sin sesión iniciada. */
