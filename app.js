@@ -671,13 +671,28 @@ var Jitsi = (function () {
          * usaba, y el cambio de cámara del teléfono. Nadie ve un error: las
          * funciones simplemente ya no están, y hay que acordarse de que existían.
          *
-         * Los DOS que se sacan, y por qué:
+         * Los que se sacan, y por qué. Cada uno tiene que poder justificarse acá:
          *
          *   · `fullscreen` — la pantalla completa de Jitsi maximiza SOLO su iframe y
          *     deja afuera los botones de producción, la cuenta regresiva y el
          *     festejo: quien la usara perdería justo lo que vino a mirar. El portal
          *     pone la suya, que agranda el contenedor entero.
          *   · `feedback` — encuesta de 8x8, ajena a la empresa. Pedido del dueño.
+         *   · `download` — ofrece bajarse la app de Jitsi, y ahí NO EXISTEN el
+         *     festejo ni la asistencia: es un botón que saca a la gente de la propia
+         *     herramienta. Decisión del dueño (ago 2026).
+         *
+         * 🔴 Y estos tres, porque EL PERMISO QUE FIRMAMOS YA LOS DESHABILITA. Ver
+         * `features` en `jaasToken_` (gas-backend.gs): `recording`, `livestreaming` y
+         * `transcription` van en false. Dejarlos en la barra es prometer algo que al
+         * apretarlo no pasa — y en una reunión eso se lee como que el portal falla:
+         *
+         *   · `recording`      — grabar          (features.recording: false)
+         *   · `livestreaming`  — transmitir      (features.livestreaming: false)
+         *   · `closedcaptions` — subtítulos      (features.transcription: false)
+         *
+         * ⚠️ Si algún día se habilita alguna de esas tres en el permiso, hay que
+         * devolver su botón acá: si no, la función queda pagada y escondida.
          *
          * ⚠️ Si Jitsi agrega un botón nuevo, NO va a aparecer hasta que se sume acá.
          * Es el precio de poder esconder esos dos: no existe una lista negra.
@@ -691,11 +706,10 @@ var Jitsi = (function () {
          * falsa impresión de que esa función estaba contemplada.
          */
         toolbarButtons: [
-          'camera', 'chat', 'closedcaptions', 'desktop', 'download',
-          'embedmeeting', 'etherpad', 'hangup', 'help', 'highlight',
-          'invite', 'linktosalesforce', 'livestreaming', 'microphone',
-          'noisesuppression', 'participants-pane', 'profile', 'raisehand',
-          'recording', 'security', 'select-background', 'settings',
+          'camera', 'chat', 'desktop', 'embedmeeting', 'etherpad',
+          'hangup', 'help', 'highlight', 'invite', 'linktosalesforce',
+          'microphone', 'noisesuppression', 'participants-pane', 'profile',
+          'raisehand', 'security', 'select-background', 'settings',
           'shareaudio', 'sharedvideo', 'shortcuts', 'stats', 'tileview',
           'toggle-camera', 'videoquality', 'whiteboard'
         ]
