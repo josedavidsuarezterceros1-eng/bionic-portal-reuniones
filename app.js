@@ -556,7 +556,33 @@ var UI = (function () {
 
   var ICONO = { ok: 'check_circle', error: 'error', info: 'info' };
 
-  function toast(mensaje, tipo) {
+  /**
+   * Rastro en la consola de las decisiones que MUEVEN al usuario de lugar.
+   *
+   * 🔴 No es depuración olvidada: es lo único que contesta "¿por qué me sacó de la
+   * sala?" cuando pasa en una reunión de verdad. Los carteles duran segundos y la
+   * persona está mirando el video, no la esquina; el registro del navegador queda.
+   *
+   * Va con prefijo fijo para que se pueda filtrar escribiendo `[portal]` en la
+   * consola, entre las cientos de líneas que escupe Jitsi.
+   *
+   * Se anota SOLO lo que decide algo —entrar, salir, montar o desmontar el video,
+   * quién es anfitrión— y nunca datos de personas ni el permiso de entrada.
+   */
+  function rastro(que, detalle) {
+    try {
+      console.log('[portal] ' + que, detalle === undefined ? '' : detalle);
+    } catch (e) {}
+  }
+
+  /**
+   * @param {number} [ms] Cuánto queda en pantalla. Sin esto, todos duran lo mismo
+   *   y un aviso que EXPLICA POR QUÉ pasó algo se va antes de que la persona
+   *   termine de mirar la pantalla. Le pasó al dueño: lo sacó de una sala, vio un
+   *   cartel y no llegó a leerlo — así que no se pudo saber si lo había sacado el
+   *   portal o la videollamada.
+   */
+  function toast(mensaje, tipo, ms) {
     tipo = tipo || 'info';
     var cont = id('toasts');
     if (!cont) return;
@@ -567,7 +593,7 @@ var UI = (function () {
     setTimeout(function () {
       el.classList.add('saliendo');
       setTimeout(function () { el.remove(); }, 220);
-    }, tipo === 'error' ? 6000 : 3800);
+    }, ms || (tipo === 'error' ? 6000 : 3800));
   }
 
   /** "Natalia Romay" → "NR". Lo que se muestra cuando no hay foto cargada. */
@@ -608,7 +634,8 @@ var UI = (function () {
     return d.toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' });
   }
 
-  return { $: $, id: id, esc: esc, mostrar: mostrar, toast: toast, hora: hora, avatar: avatar, iniciales: iniciales };
+  return { $: $, id: id, esc: esc, mostrar: mostrar, toast: toast, rastro: rastro,
+           hora: hora, avatar: avatar, iniciales: iniciales };
 })();
 
 
@@ -616,6 +643,9 @@ var UI = (function () {
    Jitsi — la videollamada, y la detección REAL de moderador
    ══════════════════════════════════════════════════════════════════════════ */
 var Jitsi = (function () {
+  // ¿Llegó a ENTRAR a la llamada, o se quedó en la pantalla previa? Es lo que
+  // distingue "se cortó la reunión" de "canceló antes de entrar".
+  var entroAlaLlamada = false;
   var api = null;
   var miId = null;
   var salaMontada = null;
@@ -760,6 +790,8 @@ var Jitsi = (function () {
 
     api.addEventListener('videoConferenceJoined', function (ev) {
       miId = ev && ev.id;
+      entroAlaLlamada = true;
+      UI.rastro('entró a la videollamada');
       Sala.alEntrarAJitsi();
     });
 
@@ -777,6 +809,7 @@ var Jitsi = (function () {
      */
     api.addEventListener('participantRoleChanged', function (ev) {
       if (!ev || ev.id !== miId) return;
+      UI.rastro('Jitsi le dio el rol', ev.role);
       Sala.alCambiarRol(ev.role === 'moderator');
     });
 
@@ -786,6 +819,7 @@ var Jitsi = (function () {
     });
 
     api.addEventListener('videoConferenceLeft', function () {
+      UI.rastro('salió de la videollamada (videoConferenceLeft)');
       Sala.alCambiarCamara(false);
     });
 
@@ -809,6 +843,11 @@ var Jitsi = (function () {
      * que el anfitrión termine la reunión para todos.
      */
     api.addEventListener('readyToClose', function () {
+      // 🔴 El dato que faltaba para explicar una expulsión: si NUNCA llegó a entrar
+      // a la llamada, esto vino de la pantalla previa (canceló o tocó colgar ahí),
+      // no de una reunión cortada. Son dos causas muy distintas.
+      UI.rastro('Jitsi pide cerrar (readyToClose) · ¿había entrado a la llamada?',
+        entroAlaLlamada);
       setTimeout(function () { Sala.alColgar(); }, 0);
     });
 
@@ -819,6 +858,8 @@ var Jitsi = (function () {
   }
 
   function desmontar() {
+    if (api) UI.rastro('se desmonta el video');
+    entroAlaLlamada = false;
     clearTimeout(avisoModTimer);
     if (api) { try { api.dispose(); } catch (e) {} }
     api = null; miId = null; salaMontada = null;
@@ -917,8 +958,15 @@ var Sala = (function () {
    * un aviso tardío tiraría al usuario al dashboard cuando ya está en otro lado.
    */
   function alColgar() {
-    if (!S.sala) return;
-    UI.toast('Salió de la reunión.', 'info');
+    if (!S.sala) { UI.rastro('aviso de colgado TARDÍO: se ignora (ya no hay sala)'); return; }
+    UI.rastro('el portal devuelve al listado porque la videollamada terminó');
+    /*
+     * 8 segundos, no los 3,8 de siempre: este cartel EXPLICA por qué la pantalla
+     * cambió sola. Al dueño lo sacó de una sala, vio un cartel y no llegó a
+     * leerlo — y sin eso no se pudo saber si lo había sacado el portal o la
+     * videollamada. Un aviso que se va antes de que lo lean no avisó nada.
+     */
+    UI.toast('Se cerró la videollamada, así que volvió al listado de filiales.', 'info', 8000);
     App.irA('dashboard');   // irA se encarga de llamar a salir()
   }
 
@@ -1046,6 +1094,14 @@ var Sala = (function () {
     if (r.sala.abierta || r.soyAnfitrion) {
       pedirEntradaYMontar();
     } else {
+      // Si el video estaba puesto y esto lo saca, la persona ve desaparecer la
+      // reunión sin haber tocado nada. Queda anotado con el motivo exacto.
+      if (Jitsi.montada()) {
+        UI.rastro('se saca el video: la sala figura cerrada y no soy anfitrión',
+          { salaAbierta: r.sala.abierta, soyAnfitrion: r.soyAnfitrion,
+            anfitrion: r.anfitrion ? r.anfitrion.nombre : null,
+            ausente: r.anfitrion ? !!r.anfitrion.ausente : null });
+      }
       Jitsi.desmontar();
     }
 
