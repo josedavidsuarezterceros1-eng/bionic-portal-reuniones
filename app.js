@@ -731,10 +731,32 @@ var Jitsi = (function () {
 
     salaMontada = entrada.sala;
 
-    try {
-      var iframe = api.getIFrame();
-      if (iframe) iframe.setAttribute('allow', 'camera; microphone; display-capture; autoplay; clipboard-write');
-    } catch (e) {}
+    /*
+     * 🔴 NO SE TOCA EL `allow` DEL IFRAME. Acá había un `setAttribute` que lo
+     * REEMPLAZABA por una lista de cinco permisos, y eso solo restaba.
+     *
+     * Jitsi ya le pone NUEVE al crear el iframe (se verificó contra su
+     * `external_api.js` real, no de memoria):
+     *
+     *   autoplay · camera · clipboard-write · compute-pressure · display-capture
+     *   hid · microphone · screen-wake-lock · speaker-selection
+     *
+     * Los cinco que poníamos estaban TODOS ahí dentro, así que la línea no agregaba
+     * nada y le quitaba cuatro:
+     *
+     *   · screen-wake-lock  — 🔴 lo que evita que la PANTALLA SE APAGUE en plena
+     *     reunión. Sin él, el equipo se duerme como si nadie lo estuviera usando.
+     *   · speaker-selection — elegir por qué parlante sale el audio.
+     *   · hid               — auriculares USB con botones de silenciar/colgar.
+     *   · compute-pressure  — deja a Jitsi bajar la calidad cuando el equipo sufre.
+     *
+     * Ninguna de las cuatro da error al faltar: simplemente esa función deja de
+     * andar. `speaker-selection` era el aviso "Unrecognized feature" de la consola,
+     * que parecía ruido de Jitsi y era nuestro.
+     *
+     * ⚠️ Si alguna vez hace falta un permiso más, se AGREGA al que ya está puesto —
+     * nunca se reemplaza la lista entera.
+     */
 
     api.addEventListener('videoConferenceJoined', function (ev) {
       miId = ev && ev.id;
