@@ -679,8 +679,26 @@ var Jitsi = (function () {
       height: '100%',
       parentNode: cont,
       configOverwrite: {
+        /*
+         * 🔴 NO va `startWithAudioMuted`, y sacarlo fue una decisión, no un olvido.
+         *
+         * Estaba en true para que una filial entera no entrara con los micrófonos
+         * abiertos. El efecto secundario era peor que el problema: la pantalla previa
+         * de Jitsi TIENE un interruptor de micrófono, la persona lo prendía, apretaba
+         * "Entrar"… y el portal se lo apagaba igual. O sea que ese interruptor MENTÍA,
+         * y quien no encontraba después el botón de la barra se quedaba mudo toda la
+         * reunión creyendo que había hecho lo correcto. Reportado por el dueño en
+         * ago 2026, y la decisión de respetar la elección es suya.
+         *
+         * Lo que reemplaza al forzado: el anfitrión tiene la moderación de audio en el
+         * panel de Participantes. Silenciar a quien molesta es un clic; adivinar por
+         * qué no te escuchan es media reunión.
+         *
+         * ⚠️ El de VIDEO se queda: entrar con la cámara apagada ahorra datos y, sobre
+         * todo, la asistencia se cuenta por cámara encendida — prenderla tiene que ser
+         * un acto deliberado, no algo que pasa solo al entrar.
+         */
         startWithVideoMuted: true,
-        startWithAudioMuted: true,
         prejoinPageEnabled: true,
         disableDeepLinking: true,
         enableWelcomePage: false,
