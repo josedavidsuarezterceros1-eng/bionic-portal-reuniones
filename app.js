@@ -658,7 +658,33 @@ var Jitsi = (function () {
         // de 'no moderators have yet arrived' aparecía así en pleno arranque de la
         // reunión. Es la pantalla que más gente va a leer del portal sin que la
         // hayamos escrito nosotros, así que va en el idioma de la casa.
-        defaultLanguage: 'es'
+        defaultLanguage: 'es',
+        /*
+         * 🔴 Lista blanca de botones de Jitsi, y `fullscreen` NO está a propósito.
+         *
+         * La pantalla completa de Jitsi maximiza solo su iframe y deja afuera los
+         * botones de producción, la cuenta regresiva y el festejo: quien la usara
+         * perdería justo lo que vino a mirar. El portal pone la suya, que agranda
+         * el contenedor entero.
+         *
+         * Tampoco va `feedback` (encuesta de 8x8, ajena a la empresa) ni `invite`
+         * (a esta sala se entra por el portal, que es quien valida el cargo).
+         *
+         * ⚠️ Es una lista BLANCA: lo que no esté acá desaparece de la barra. Al
+         * agregar una función de Jitsi hay que sumarla, o simplemente no se ve.
+         */
+        toolbarButtons: [
+          'microphone', 'camera',
+          // ⚠️ `toggle-camera` es el que cambia entre la cámara de adelante y la de
+          // atrás, y SOLO aparece en el teléfono. La primera versión de esta lista lo
+          // dejó afuera: en la computadora no se nota nada, y en el celular —que es
+          // desde donde entra buena parte del equipo— la persona queda atada a la
+          // cámara que le tocó, sin ningún error que explique por qué.
+          'toggle-camera',
+          'desktop', 'chat', 'raisehand',
+          'participants-pane', 'tileview', 'select-background',
+          'videoquality', 'filmstrip', 'settings', 'hangup'
+        ]
       },
       interfaceConfigOverwrite: {
         SHOW_JITSI_WATERMARK: false,
@@ -713,6 +739,29 @@ var Jitsi = (function () {
       Sala.alCambiarCamara(false);
     });
 
+    /*
+     * 🔴 Colgar tiene que devolver al listado de filiales, no dejar una pantalla en
+     * blanco.
+     *
+     * Jitsi avisa con `readyToClose` que ya terminó y que lo saquemos de la página.
+     * Mientras nadie escuchaba ese aviso, el iframe se quedaba mostrando SU pantalla
+     * de despedida —la blanca— y el portal seguía como si la reunión continuara:
+     * sondeando la sala, con la pestaña "Reunión" activa y sin ninguna salida a la
+     * vista salvo tocar "Volver".
+     *
+     * ⚠️ Se sale por `setTimeout` a propósito: acá adentro seguimos dentro del
+     * despacho del evento de Jitsi, y lo primero que hace la salida es `dispose()`
+     * sobre esta misma instancia. Destruir el objeto mientras corre uno de sus
+     * handlers es pedirle que reviente en la única pantalla donde el usuario ya no
+     * puede hacer nada.
+     *
+     * Cubre las tres formas de terminar: colgar, cancelar en la pantalla previa, y
+     * que el anfitrión termine la reunión para todos.
+     */
+    api.addEventListener('readyToClose', function () {
+      setTimeout(function () { Sala.alColgar(); }, 0);
+    });
+
     // Si en un rato largo no llegó el rol de moderador, el permiso firmado no fue
     // aceptado. Se avisa en vez de dejar la sala trabada en silencio.
     clearTimeout(avisoModTimer);
@@ -727,7 +776,31 @@ var Jitsi = (function () {
     if (cont) cont.innerHTML = '';
   }
 
-  return { montar: montar, desmontar: desmontar, disponible: disponible, montada: function () { return !!api; } };
+  /**
+   * Termina la videollamada PARA TODOS. Solo la acepta Jitsi si quien la manda
+   * tiene la corona, y el permiso de la corona lo firma el servidor.
+   *
+   * ⚠️ Jitsi IGNORA EN SILENCIO un comando que no conoce: si esta orden no llegara
+   * a existir en la versión servida, acá no pasa nada y no hay error que ver. Por
+   * eso el llamador libera la sala igual — pase lo que pase con el comando, el
+   * portal queda coherente: la reunión figura terminada y la sala, libre.
+   */
+  function terminarParaTodos() {
+    if (!api) return false;
+    try { api.executeCommand('endConference'); return true; } catch (e) { return false; }
+  }
+
+  /** Cuántos hay en la llamada, para poder decirlo en la confirmación. */
+  function cuantos() {
+    if (!api) return 0;
+    try { return api.getNumberOfParticipants() || 0; } catch (e) { return 0; }
+  }
+
+  return {
+    montar: montar, desmontar: desmontar, disponible: disponible,
+    montada: function () { return !!api; },
+    terminarParaTodos: terminarParaTodos, cuantos: cuantos
+  };
 })();
 
 
@@ -780,11 +853,30 @@ var Sala = (function () {
     S.asisFaltan = null;
     S.redCaida = false;
     S.ceroPedido = null;
+    // "Ya se decidió algo sobre esta sala en esta visita". Ver `autoTomarSala`.
+    S.autoTomaResuelta = false;
     poll();
     S.timerTick = setInterval(tick, 1000);
   }
 
+  /*
+   * Colgó (o lo colgaron). Se vuelve al listado de filiales.
+   *
+   * El guard de `S.sala` no es de más: `readyToClose` también llega cuando la salida
+   * ya la disparó otra cosa —"Volver", cerrar sesión, entrar a otra sala—, y sin él
+   * un aviso tardío tiraría al usuario al dashboard cuando ya está en otro lado.
+   */
+  function alColgar() {
+    if (!S.sala) return;
+    UI.toast('Salió de la reunión.', 'info');
+    App.irA('dashboard');   // irA se encarga de llamar a salir()
+  }
+
   function salir() {
+    // Va acá y no en el botón "Salas": por esta función pasan TODOS los caminos de
+    // salida —colgar, cerrar sesión, la sesión vencida, cambiar de sala— y cualquiera
+    // de ellos deja la pantalla completa puesta sobre una vista escondida.
+    Pantalla.apagar();
     clearTimeout(S.timerPoll); clearInterval(S.timerTick); clearInterval(S.timerAsis);
     S.timerPoll = S.timerTick = S.timerAsis = null;
     S.camaraOn = false;
@@ -871,8 +963,26 @@ var Sala = (function () {
   }
 
   function aplicar(r) {
+    /*
+     * 🔴 Si me sacaron la sala, tengo que enterarme por un cartel, no por deducirlo.
+     *
+     * Al desplazado el panel le cambia solo —el botón "Liberar la sala" se va y
+     * aparece la ficha del otro— y sin aviso eso se lee como que el portal se rompió,
+     * justo en la persona que estaba conduciendo la reunión.
+     *
+     * ⚠️ Se compara contra el estado ANTERIOR y se exige que HAYA otro anfitrión: al
+     * liberar la sala uno mismo, `anfitrion` queda en null y ahí no hay nada que
+     * avisar. Esa distinción es lo que evita el cartel absurdo de "le sacaron la
+     * sala" cuando la soltó usted.
+     */
+    if (S.estado && S.estado.soyAnfitrion && !r.soyAnfitrion && r.anfitrion) {
+      UI.toast(r.anfitrion.nombre + ' tomó el control de la sala.', 'info');
+    }
+
     S.estado = r;
     S.sala = r.sala;
+
+    autoTomarSala(r);
 
     // El título se escribe en CADA respuesta, no solo en la primera. Antes iba
     // atado a un flag de "primera consulta": si esa fallaba —justo lo que pasa con
@@ -1050,7 +1160,8 @@ var Sala = (function () {
     var firma = [
       r.soyAnfitrion ? 'yo' : (r.anfitrion ? 'otro' : 'nadie'),
       r.anfitrion ? r.anfitrion.nombre : '',
-      mod, r.puedoReclamar
+      r.anfitrion ? !!r.anfitrion.ausente : false,
+      mod, r.puedoReclamar, r.puedoDesplazar
     ].join('|');
 
     if (r.soyAnfitrion) {
@@ -1064,19 +1175,86 @@ var Sala = (function () {
         (mod ? '' :
           '<p style="font-size:12.5px;color:var(--txt-dim);margin-bottom:12px">' +
           'Si tarda en abrir, recargue la página.</p>') +
-        '<button class="btn btn-peligro btn-bloque" id="btnLiberar">' +
-          '<span class="material-symbols-rounded">logout</span> Liberar la sala</button>')) return;
+        '<button class="btn btn-bloque" id="btnLiberar">' +
+          '<span class="material-symbols-rounded">logout</span> Liberar la sala</button>' +
+        /*
+         * Terminar para todos solo aparece con la sala YA ABIERTA: sin reunión
+         * montada no hay nada que terminar, y el botón sería una promesa que no se
+         * cumple. Va en rojo y SEGUNDO: liberar la sala es lo de todos los días,
+         * esto es lo que no tiene vuelta atrás.
+         */
+        (mod
+          ? '<button class="btn btn-peligro btn-bloque" id="btnTerminar" style="margin-top:8px">' +
+              '<span class="material-symbols-rounded">call_end</span> Finalizar reunión</button>' +
+            '<p style="font-size:12px;color:var(--txt-dim);margin-top:8px">' +
+              'Cierra la videollamada para todos los participantes.</p>'
+          : ''))) return;
       UI.id('btnLiberar').onclick = liberar;
+      if (UI.id('btnTerminar')) UI.id('btnTerminar').onclick = terminarReunion;
       return;
     }
 
     if (r.anfitrion) {
-      pintarSi(cont, firma,
+      var ficha =
         '<div class="anfitrion-cara">' + UI.avatar(r.anfitrion.foto, r.anfitrion.nombre) +
           '<div><strong>' + UI.esc(r.anfitrion.nombre) + '</strong>' +
           '<span>' + UI.esc(r.anfitrion.cargo || '') + '</span></div></div>' +
         '<div class="dato-fila"><span class="k">Desde</span>' +
-        '<span class="v">' + UI.hora(r.anfitrion.desde) + '</span></div>');
+        '<span class="v">' + UI.hora(r.anfitrion.desde) + '</span></div>' +
+        /*
+         * Que dejó de responder lo ve TODO EL MUNDO, no solo quien puede rescatar la
+         * sala. El asesor es el que más rato se queda mirando una reunión donde no
+         * pasa nada: sin este renglón no tiene forma de saber si el anfitrión se cayó
+         * o si simplemente todavía no pidió producción, y lo natural es suponer que
+         * el portal se rompió.
+         */
+        (r.anfitrion.ausente
+          ? '<div class="dato-fila"><span class="k">Conexión</span>' +
+            '<span class="v" style="color:var(--ambar,#f59e0b)">Sin señal</span></div>'
+          : '');
+
+      /*
+       * El anfitrión dejó de dar señales: se cayó su internet o se fue. El botón NO
+       * habla de cargos —acá no se le saca la sala a nadie, no hay nadie— y por eso
+       * dice qué pasó: si apareciera un "Tomar la sala" a secas, el que lo aprieta
+       * no sabría si está destrabando una reunión o pisando a un compañero.
+       *
+       * Quién puede lo decide el SERVIDOR (`puedoReclamar`). El frontend no rehace
+       * ni la cuenta de los minutos ni la comparación de cargos: serían una segunda
+       * copia de reglas que ya viven en un solo lugar.
+       */
+      if (r.anfitrion.ausente && r.puedoReclamar) {
+        if (!pintarSi(cont, firma, ficha +
+          '<div class="aviso aviso-info" style="margin:12px 0 10px">' +
+            '<span class="material-symbols-rounded">network_check</span>' +
+            '<span>' + UI.esc(r.anfitrion.nombre) + ' dejó de responder. ' +
+            'Puede tomar la sala para seguir con la reunión.</span></div>' +
+          '<button class="btn btn-primario btn-bloque" id="btnReclamar">' +
+            '<span class="material-symbols-rounded">shield_person</span> Tomar la sala</button>')) return;
+        UI.id('btnReclamar').onclick = reclamar;
+        return;
+      }
+
+      /*
+       * Sala ocupada por otro que SÍ está. Antes acá se terminaba: quien llegaba
+       * después no tenía NADA que hacer salvo esperar a que el otro la liberara, o
+       * a que venciera el TTL de 2 h.
+       */
+      if (!r.puedoDesplazar) { pintarSi(cont, firma, ficha); return; }
+
+      if (!pintarSi(cont, firma, ficha +
+        '<p style="font-size:12.5px;color:var(--txt-dim);margin:12px 0 10px">' +
+          'Su cargo es superior: puede tomarle la sala. ' +
+          UI.esc(r.anfitrion.nombre) + ' deja de conducir la reunión, pero ' +
+          '<strong>la videollamada no se corta</strong>.</p>' +
+        '<div class="campo" style="margin-bottom:10px">' +
+          '<input type="password" id="passAnfitrion" placeholder="Su contraseña" autocomplete="current-password">' +
+        '</div>' +
+        '<button class="btn btn-primario btn-bloque" id="btnDesplazar">' +
+          '<span class="material-symbols-rounded">shield_person</span> Tomar la sala</button>')) return;
+
+      UI.id('btnDesplazar').onclick = desplazar;
+      UI.id('passAnfitrion').onkeydown = function (e) { if (e.key === 'Enter') desplazar(); };
       return;
     }
 
@@ -1086,17 +1264,26 @@ var Sala = (function () {
       return;
     }
 
+    /*
+     * Sala LIBRE: sin contraseña. No se le quita nada a nadie y soltarla es un clic,
+     * así que el gesto de apretar el botón ya es la intención — pedir la contraseña
+     * encima era el trámite que hacía que abrir la reunión costara dos pantallas.
+     *
+     * ⚠️ La contraseña sigue viva donde importa: para sacarle la sala a OTRO. Si
+     * este panel volviera a pedirla, quedaría pidiendo algo que el servidor ya no
+     * exige — y el portal enseñaría una regla que no es la que aplica.
+     *
+     * Normalmente ni se ve: al entrar, la sala se toma sola. Este botón queda para
+     * cuando esa toma automática no salió (un 404 del transporte) o después de
+     * haberla liberado a mano.
+     */
     if (!pintarSi(cont, firma,
       '<p style="font-size:13px;color:var(--txt-dim);margin-bottom:12px">' +
-        'Confirme con su contraseña para tomar el control de la reunión.</p>' +
-      '<div class="campo" style="margin-bottom:10px">' +
-        '<input type="password" id="passAnfitrion" placeholder="Su contraseña" autocomplete="current-password">' +
-      '</div>' +
+        'Esta sala está libre. Tómela para abrir la videollamada.</p>' +
       '<button class="btn btn-primario btn-bloque" id="btnReclamar">' +
-        '<span class="material-symbols-rounded">shield_person</span> Reclamar anfitrión</button>')) return;
+        '<span class="material-symbols-rounded">shield_person</span> Tomar la sala</button>')) return;
 
     UI.id('btnReclamar').onclick = reclamar;
-    UI.id('passAnfitrion').onkeydown = function (e) { if (e.key === 'Enter') reclamar(); };
   }
 
   function renderFestejo() {
@@ -1140,7 +1327,9 @@ var Sala = (function () {
         'Esperando a que el anfitrión pida producción.</p>';
     }
     if (!pintarSi(cont, firma, html)) return;
-    if (UI.id('btnPedir')) UI.id('btnPedir').onclick = pedirProduccion;
+    // Se le pasa el BOTÓN, no el evento: pedirProduccion lo deshabilita y le cambia
+    // el texto mientras la petición viaja.
+    if (UI.id('btnPedir')) UI.id('btnPedir').onclick = function () { pedirProduccion(this); };
   }
 
   /**
@@ -1207,12 +1396,47 @@ var Sala = (function () {
         '<span>Asistencia registrada.</span></div>';
       return;
     }
-    cont.innerHTML = S.camaraOn
-      ? '<div class="aviso aviso-info"><span class="material-symbols-rounded">videocam</span>' +
+    /*
+     * Los minutos los dice el SERVIDOR (`estado.asistencia.minutos`): la reunión de
+     * la tarde pide menos que la de la mañana, y el navegador no puede deducir el
+     * turno por su cuenta sin volverse una segunda copia de la regla del corte.
+     * Mientras no haya llegado el estado se dice "unos minutos" en vez de arriesgar
+     * un número que después cambie en pantalla.
+     */
+    var mins = S.estado.asistencia && S.estado.asistencia.minutos;
+    var cuanto = mins ? (mins === 1 ? 'un minuto' : mins + ' minutos') : 'unos minutos';
+
+    var faltan = S.asisFaltan;   // minutos, ya calculados por el servidor
+
+    if (S.camaraOn) {
+      cont.innerHTML = '<div class="aviso aviso-info">' +
+        '<span class="material-symbols-rounded">videocam</span>' +
         '<span>Cámara encendida. ' +
-        (S.asisFaltan != null ? 'Faltan ' + S.asisFaltan + ' min.' : 'Contando…') + '</span></div>'
-      : '<p style="font-size:13px;color:var(--txt-dim)">' +
-        'Encienda la cámara y manténgala 5 minutos para que quede registrada su asistencia.</p>';
+        (faltan != null
+          ? (faltan <= 1 ? 'Falta menos de un minuto.' : 'Faltan ' + faltan + ' min.')
+          : 'Contando…') +
+        '</span></div>';
+      return;
+    }
+
+    /*
+     * 🔴 Con la cámara apagada A MITAD de la cuenta NO se dice "manténgala N
+     * minutos": el servidor conserva lo que ya lleva, así que ese texto le pediría
+     * empezar de nuevo algo que no se perdió — y quien crea que perdió el progreso
+     * es probable que ni lo intente.
+     */
+    if (faltan != null && faltan > 0 && faltan < mins) {
+      cont.innerHTML = '<div class="aviso aviso-info">' +
+        '<span class="material-symbols-rounded">hourglass_top</span>' +
+        '<span>Se pausó: lo que lleva no se pierde. Vuelva a encender la cámara — ' +
+        (faltan <= 1 ? 'falta menos de un minuto' : 'faltan ' + faltan + ' min') +
+        '.</span></div>';
+      return;
+    }
+
+    cont.innerHTML = '<p style="font-size:13px;color:var(--txt-dim)">' +
+      'Encienda la cámara y manténgala ' + cuanto +
+      ' para que quede registrada su asistencia.</p>';
   }
 
   /* ── acciones ──────────────────────────────────────────────────────── */
@@ -1233,22 +1457,141 @@ var Sala = (function () {
       .then(function () { S.enviando = false; });
   }
 
+  /* Tomar una sala LIBRE. Sin contraseña: ver el comentario de `renderAnfitrion`. */
   function reclamar() {
-    var input = UI.id('passAnfitrion');
-    var pass = input ? input.value : '';
-    if (!pass) { UI.toast('Escriba su contraseña.', 'error'); return; }
-    accion({ accion: 'reclamarAnfitrion', token: Sesion.token, salaId: S.sala.id, password: pass },
+    // Cuenta como decisión: si sale mal, no se reintenta sola en el próximo sondeo.
+    S.autoTomaResuelta = true;
+    accion({ accion: 'reclamarAnfitrion', token: Sesion.token, salaId: S.sala.id },
       function () { UI.toast('Tomó la sala.', 'ok'); });
   }
 
+  /*
+   * Sacarle la sala a otro. Pide confirmación aparte de la contraseña: la contraseña
+   * responde "¿es usted?" y esto responde "¿seguro que quiere sacársela a él?", que
+   * son dos preguntas distintas. Es una acción sobre el trabajo de otra persona,
+   * delante de toda la filial.
+   */
+  function desplazar() {
+    var input = UI.id('passAnfitrion');
+    var pass = input ? input.value : '';
+    if (!pass) { UI.toast('Escriba su contraseña.', 'error'); return; }
+
+    var quien = (S.estado && S.estado.anfitrion) ? S.estado.anfitrion.nombre : 'el anfitrión actual';
+    if (!window.confirm('La sala la está conduciendo ' + quien + '.\n\n' +
+                        '¿Tomarla usted? ' + quien + ' deja de poder pedir producción.')) return;
+
+    accion({ accion: 'reclamarAnfitrion', token: Sesion.token, salaId: S.sala.id,
+             password: pass, desplazar: true },
+      function (r) { UI.toast('Tomó la sala' + (r.desplazado ? ' (era de ' + r.desplazado + ')' : '') + '.', 'ok'); });
+  }
+
+  /*
+   * Entrar a una sala LIBRE siendo quien puede abrirla la toma sola.
+   *
+   * Abrir la reunión costaba dos pantallas: entrar a la sala y después escribir la
+   * contraseña en el panel de la derecha. Con toda la filial esperando el video,
+   * esa segunda pantalla es puro trámite: la sala está vacía, no se le quita nada a
+   * nadie y soltarla es un clic.
+   *
+   * 🔴 UNA sola vez por visita a la sala, y LIBERAR también cuenta como decidido.
+   *
+   * Esto no es prolijidad: sin la marca, soltar la sala estando adentro la volvía a
+   * tomar en el sondeo siguiente —dos segundos después— y no había manera de
+   * liberarla sin salirse de la reunión. Lo encontró el test, no el razonamiento.
+   *
+   * El mismo freno evita que un rechazo del servidor se convierta en un POST cada
+   * 2 s durante toda la reunión, y encima sobre una acción que ESCRIBE.
+   *
+   * ⚠️ Y solo con la sala VACÍA. Si ya la tiene otro, el camino es el de desplazar
+   * —con contraseña y confirmación—, nunca este.
+   */
+  function autoTomarSala(r) {
+    if (S.autoTomaResuelta) return;
+    if (!r.puedoReclamar || r.anfitrion || r.soyAnfitrion) return;
+    S.autoTomaResuelta = true;
+
+    accion({ accion: 'reclamarAnfitrion', token: Sesion.token, salaId: S.sala.id },
+      function () { UI.toast('Abriendo la sala…', 'info'); });
+  }
+
+  /*
+   * Terminar la reunión para todos. No tiene vuelta atrás y se ejecuta sobre gente
+   * que está trabajando, así que pide confirmación con el número de participantes
+   * adelante — "¿terminar la reunión?" a secas no dice a cuántos afecta.
+   */
+  function terminarReunion() {
+    var n = Jitsi.cuantos();
+    if (!window.confirm('Se va a cerrar la videollamada' +
+        (n > 1 ? ' para las ' + n + ' personas que están adentro' : '') + '.\n\n' +
+        'Esto no se puede deshacer. ¿Terminar la reunión?')) return;
+
+    /*
+     * 🔴 Se libera la sala PASE LO QUE PASE con el comando.
+     *
+     * Jitsi ignora en silencio una orden que no conoce, así que "terminó" no se
+     * puede dar por cierto. Liberando igual, el portal queda coherente en los dos
+     * casos: la sala vuelve a estar disponible y nadie queda conduciendo una
+     * reunión que ya no existe. Si el comando SÍ funcionó, a cada uno le llega el
+     * aviso de Jitsi y el portal lo devuelve al listado (ver `readyToClose`).
+     */
+    Jitsi.terminarParaTodos();
+    S.autoTomaResuelta = true;
+    accion({ accion: 'liberarAnfitrion', token: Sesion.token, salaId: S.sala.id },
+      function () { UI.toast('Reunión terminada.', 'ok'); });
+  }
+
   function liberar() {
+    // Soltar la sala es una decisión: no se la vuelve a tomar sola en el próximo
+    // sondeo. Se marca ANTES de mandar, o el sondeo que corre en paralelo llega
+    // primero a `autoTomarSala` con la sala ya libre.
+    S.autoTomaResuelta = true;
     accion({ accion: 'liberarAnfitrion', token: Sesion.token, salaId: S.sala.id },
       function () { UI.toast('Sala liberada.', 'ok'); });
   }
 
-  function pedirProduccion() {
+  /*
+   * Pedir producción tarda: el clic viaja a Apps Script y hasta que vuelve no pasa
+   * NADA en pantalla. El anfitrión, con toda la filial mirándolo, no sabe si su clic
+   * entró — y vuelve a apretar.
+   *
+   * 🔴 Que se deshabilite al instante no es solo cortesía: `iniciarRonda` ESCRIBE, y
+   * los POST que escriben no se reintentan solos justamente porque repetirlos
+   * duplica (ver POST_REPETIBLE). El doble clic ya lo frenaba `S.enviando`, pero en
+   * silencio: el segundo clic no hacía nada y tampoco se veía que el primero seguía
+   * en camino.
+   */
+  function pedirProduccion(boton) {
     S.ultimoDestape = null;
-    accion({ accion: 'iniciarRonda', token: Sesion.token, salaId: S.sala.id });
+    var etiqueta = boton ? boton.innerHTML : '';
+    var salioBien = false;
+
+    if (boton) {
+      boton.disabled = true;
+      boton.innerHTML = '<span class="material-symbols-rounded girando">sync</span> Sincronizando sala…';
+    }
+
+    var restaurar = function () {
+      if (!boton || !boton.isConnected) return;
+      boton.disabled = false;
+      boton.innerHTML = etiqueta;
+    };
+
+    /*
+     * Si salió bien NO se restaura: la ronda arranca y el repintado reemplaza este
+     * botón por el countdown. Restaurarlo acá haría parpadear "Pedir producción"
+     * entre medio, que es justo la duda que veníamos a sacar.
+     *
+     * ⚠️ Pero el repintado solo ocurre si el estado CAMBIA (`pintarSi` compara una
+     * firma). Un "ok" del servidor sin ronda a la vista dejaría el botón trabado
+     * para siempre, y sin manera de pedir producción en toda la reunión. Por eso el
+     * plazo: si a los 10 s el botón sigue diciendo "Sincronizando", vuelve solo.
+     */
+    accion({ accion: 'iniciarRonda', token: Sesion.token, salaId: S.sala.id },
+      function () { salioBien = true; })
+      .then(function () {
+        if (!salioBien) { restaurar(); return; }
+        setTimeout(restaurar, 10000);
+      });
   }
 
   function anotar(tipo, boton) {
@@ -1352,7 +1695,7 @@ var Sala = (function () {
     API.post({ accion: 'pingAsistencia', token: Sesion.token, salaId: S.sala.id, camaraActiva: S.camaraOn })
       .then(function (r) {
         if (!r || !r.ok) return;
-        S.asisFaltan = r.faltan;
+        S.asisFaltan = (r.faltanMin != null) ? r.faltanMin : r.faltan;
         if (r.validado) {
           S.asisValidada = true;
           clearInterval(S.timerAsis); S.timerAsis = null;
@@ -1389,6 +1732,7 @@ var Sala = (function () {
     entrar: entrar, salir: salir,
     activa: function () { return !!S.sala; },
     alEntrarAJitsi: alEntrarAJitsi,
+    alColgar: alColgar,
     alCambiarRol: alCambiarRol,
     alCambiarCamara: alCambiarCamara,
     avisarModeradorDemorado: avisarModeradorDemorado,
@@ -1399,10 +1743,155 @@ var Sala = (function () {
 
 
 /* ══════════════════════════════════════════════════════════════════════════
+   Pantalla completa — la del PORTAL, no la de Jitsi
+   ══════════════════════════════════════════════════════════════════════════ */
+/*
+ * 🔴 Por qué existe: la pantalla completa de Jitsi maximiza SOLO su iframe.
+ *
+ * Todo lo que el portal dibuja —los botones de producción, la cuenta regresiva, el
+ * festejo— vive FUERA de ese iframe, así que al maximizar desaparecía justo en el
+ * momento en que más se mira la pantalla. Por eso se esconde la de Jitsi (ver
+ * `toolbarButtons`) y se agranda el contenedor entero.
+ */
+var Pantalla = (function () {
+  var DESTINO = '.sala-layout';
+  var guardados = [];
+
+  function elemento() { return document.querySelector(DESTINO); }
+  function activa() { return !!document.fullscreenElement; }
+
+  /*
+   * 🔴 Los avisos y el festejo viven FUERA de la sala en el árbol de la página, y en
+   * pantalla completa el navegador dibuja SOLO lo que está adentro del elemento
+   * maximizado. Sin mudarlos, al entrar en pantalla completa desaparecen los dos —
+   * o sea que se perdería el festejo, que es exactamente lo que este cambio viene a
+   * salvar, y encima sin ningún error.
+   *
+   * Se mudan al entrar y se devuelven al salir. Se guarda de dónde salió cada uno
+   * en vez de suponer que era `body`: suponerlo funciona hasta que alguien los
+   * mueva, y ahí falla en silencio.
+   */
+  function mudar(hacia) {
+    // Idempotente: `fullscreenchange` puede llegar más de una vez estando ya
+    // maximizado, y mudar dos veces dejaría `guardados` con entradas repetidas.
+    if (guardados.length) return;
+    ['toasts', 'celebracion'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      guardados.push({ el: el, padre: el.parentNode });
+      try { hacia.appendChild(el); } catch (e) {}
+    });
+  }
+
+  function devolver() {
+    guardados.forEach(function (g) {
+      try { g.padre.appendChild(g.el); } catch (e) {}
+    });
+    guardados = [];
+  }
+
+  /*
+   * 🔴 iPhone NO deja poner en pantalla completa un elemento cualquiera: Safari en
+   * iOS solo la da para un <video>. El botón ahí no puede funcionar nunca.
+   *
+   * Se esconde por CAPACIDAD (`document.fullscreenEnabled`), no adivinando el
+   * teléfono por su user-agent: la lista de excepciones envejece y hoy falla al
+   * revés en las tablets. Un botón que no hace nada es peor que no tenerlo: la
+   * persona lo aprieta en medio de la reunión y cree que el portal se colgó.
+   */
+  function ajustarDisponibilidad() {
+    var b = UI.id('btnPantalla');
+    if (!b) return;
+    var puede = (typeof document.fullscreenEnabled === 'undefined') || document.fullscreenEnabled;
+    b.style.display = puede ? '' : 'none';
+  }
+
+  function alternar() {
+    var el = elemento();
+    if (!el) return;
+    if (activa()) {
+      if (document.exitFullscreen) document.exitFullscreen();
+      return;
+    }
+    var pedir = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (!pedir) { UI.toast('Su navegador no permite pantalla completa acá.', 'info'); return; }
+    // Puede rechazarse (permisos, un gesto que el navegador no considera válido):
+    // se avisa en vez de dejar un botón que no hace nada.
+    Promise.resolve(pedir.call(el)).catch(function () {
+      UI.toast('El navegador no dejó abrir la pantalla completa.', 'error');
+    });
+  }
+
+  function alternarPanel() {
+    var el = elemento();
+    if (!el) return;
+    // El icono lo alterna el CSS a partir de esta clase: ver `.ico-full`.
+    var oculto = el.classList.toggle('panel-oculto');
+    var b = UI.id('btnPanel');
+    if (b) {
+      var txt = oculto ? 'Mostrar el panel' : 'Esconder el panel';
+      b.title = txt;
+      b.setAttribute('aria-label', txt);
+    }
+  }
+
+  function alCambiar() {
+    var el = elemento();
+    // El icono lo alterna el CSS con `:fullscreen`: no hay estado que sincronizar.
+    if (activa() && el) mudar(el);
+    else {
+      devolver();
+      // Al salir, el panel vuelve a ser una columna del layout: dejarlo escondido
+      // dejaría un hueco al costado y ningún botón a la vista para recuperarlo
+      // (el de esconderlo solo se ve en pantalla completa).
+      if (el) el.classList.remove('panel-oculto');
+    }
+  }
+
+  /*
+   * 🔴 Salir de la sala DEBE apagar la pantalla completa, y no es cosmético.
+   *
+   * El elemento maximizado es la vista de la sala. Al salir, esa vista se esconde
+   * pero la pantalla completa sigue puesta: queda el navegador maximizado mostrando
+   * NADA, y sin más salida que Escape. Peor todavía, los avisos y el festejo están
+   * mudados adentro de esa vista escondida, así que el portal se queda SIN AVISOS
+   * en todas las pantallas — un portal a medio funcionar, sin un solo error.
+   *
+   * Se comprobó con una sonda: salir con "Salas" dejaba las tres cosas rotas a la vez.
+   */
+  function apagar() {
+    if (activa() && document.exitFullscreen) {
+      try { document.exitFullscreen(); } catch (e) {}
+    }
+  }
+
+  return {
+    alternar: alternar, alternarPanel: alternarPanel,
+    alCambiar: alCambiar, activa: activa, apagar: apagar,
+    ajustarDisponibilidad: ajustarDisponibilidad
+  };
+})();
+
+
+/* ══════════════════════════════════════════════════════════════════════════
    Dashboard
    ══════════════════════════════════════════════════════════════════════════ */
 var Dashboard = (function () {
   var timer = null;
+
+  /*
+   * Las salas que ya vinieron en la respuesta de arranque (`login` o `yo`).
+   *
+   * 🔴 Lleva marca de tiempo y se usa UNA sola vez. El dato es efímero —el estado
+   * de una sala cambia solo, con quien la toma o la libera—, así que pintar una
+   * precarga vieja mostraría salas "sin abrir" que ya están en vivo, sin ningún
+   * error y justo en la pantalla que se mira para decidir a cuál entrar.
+   */
+  var precarga = null;
+
+  function precargar(salas) {
+    precarga = salas ? { salas: salas, ts: Date.now() } : null;
+  }
 
   var ESTADO = {
     live:    { chip: 'chip-verde', txt: 'En vivo' },
@@ -1491,7 +1980,33 @@ var Dashboard = (function () {
   }
 
   return {
-    activar: function () { cargar(); timer = setInterval(cargar, 12000); },
+    activar: function () {
+      /*
+       * Si el arranque ya trajo las salas, se pintan en el acto y se ahorra el
+       * segundo viaje a Apps Script. El plazo es el mismo del sondeo: más viejo que
+       * eso ya lo habríamos refrescado, así que no vale pintarlo.
+       */
+      /*
+       * ⚠️ Se exige que la precarga traiga el ESTADO de cada sala, no solo su nombre.
+       *
+       * El backend viejo devolvía en el login la lista pelada, sin estado ni
+       * anfitrión. Si el frontend se publica antes que el backend —y son dos
+       * despliegues distintos, así que va a pasar— pintar esa lista mostraría TODAS
+       * las filiales como "Sin abrir", incluida la que está en vivo, justo en la
+       * pantalla que se mira para decidir a cuál entrar. Se corrige sola al primer
+       * sondeo, pero esos segundos son los del arranque de la reunión.
+       *
+       * Con este control, el orden de despliegue deja de importar: si la precarga no
+       * sirve, se pide la lista como antes.
+       */
+      var completa = precarga && precarga.salas &&
+        precarga.salas.length && precarga.salas.every(function (s) { return !!s.estado; });
+      var fresca = completa && (Date.now() - precarga.ts) < 12000;
+      if (fresca) pintar(precarga.salas); else cargar();
+      precarga = null;
+      timer = setInterval(cargar, 12000);
+    },
+    precargar: precargar,
     desactivar: function () { clearInterval(timer); timer = null; }
   };
 })();
@@ -1524,11 +2039,12 @@ var Asistencia = (function () {
     }
     cont.innerHTML =
       '<div class="tabla-scroll"><table><thead><tr>' +
-        '<th>Fecha</th><th>Nombre</th><th>Cargo</th><th>Sala</th><th>Hora</th><th>Estado</th>' +
+        '<th>Fecha</th><th>Turno</th><th>Nombre</th><th>Cargo</th><th>Sala</th><th>Hora</th><th>Estado</th>' +
       '</tr></thead><tbody>' +
       logs.map(function (l) {
         return '<tr>' +
           '<td>' + UI.esc(l.fecha) + '</td>' +
+          '<td><span class="chip">' + UI.esc(l.turno || '—') + '</span></td>' +
           '<td style="font-weight:600">' + UI.esc(l.nombre) + '</td>' +
           '<td style="color:var(--txt-dim);font-size:12.5px">' + UI.esc(l.cargo) + '</td>' +
           '<td style="color:var(--txt-dim)">' + UI.esc(l.sala) + '</td>' +
@@ -1643,7 +2159,10 @@ var App = (function () {
     UI.mostrar(UI.id('loginAviso'), !!msg);
   }
 
-  function entrarApp(usuario) {
+  function entrarApp(usuario, salas) {
+    // Antes de pintar nada: `irA('dashboard')` activa el Dashboard, y si las salas
+    // llegan después ya disparó su propio pedido y el ahorro se pierde.
+    Dashboard.precargar(salas);
     Sesion.usuario = usuario;
     UI.id('uFoto').innerHTML = UI.avatar(usuario.fotoUrl, usuario.nombre);
     UI.id('uNombre').textContent = usuario.nombre;
@@ -1671,7 +2190,7 @@ var App = (function () {
         if (!r || !r.ok) { avisoLogin((r && r.message) || 'No se pudo ingresar.'); return; }
         Sesion.guardar(r.token, r.usuario, recordar);
         UI.id('loginPass').value = '';
-        entrarApp(r.usuario);
+        entrarApp(r.usuario, r.salas);
       })
       .catch(function (err) { avisoLogin(err.message || 'Error de conexión.'); })
       .then(function () { btn.disabled = false; });
@@ -1689,7 +2208,7 @@ var App = (function () {
     if (!Sesion.recuperar() || !Cfg.url()) { mostrarLogin(''); return; }
     API.get({ accion: 'yo', token: Sesion.token })
       .then(function (r) {
-        if (r && r.ok) entrarApp(r.usuario);
+        if (r && r.ok) entrarApp(r.usuario, r.salas);
         else mostrarLogin('');
       })
       /*
@@ -1759,6 +2278,17 @@ var App = (function () {
     UI.id('btnGuardarApi').addEventListener('click', Config.guardar);
     UI.id('btnProbarApi').addEventListener('click', Config.probar);
     UI.id('btnCerrarCel').addEventListener('click', Sala.cerrarCelebracion);
+    UI.id('btnPantalla').addEventListener('click', Pantalla.alternar);
+    UI.id('btnPanel').addEventListener('click', Pantalla.alternarPanel);
+    /*
+     * Se escucha el CAMBIO, no solo el clic: de la pantalla completa también se sale
+     * con Escape o con el botón del navegador, y ahí nadie pasa por `alternar`. Sin
+     * este escucha, el icono quedaría diciendo "salir" fuera de pantalla completa y
+     * —peor— los avisos y el festejo se quedarían mudados adentro de un contenedor
+     * que ya no está maximizado.
+     */
+    document.addEventListener('fullscreenchange', Pantalla.alCambiar);
+    Pantalla.ajustarDisponibilidad();
     UI.id('btnRepetirSirena').addEventListener('click', Sala.repetirSirena);
 
     UI.id('linkConfig').addEventListener('click', function (ev) { ev.preventDefault(); abrirConfig(); });

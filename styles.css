@@ -99,6 +99,12 @@ h1, h2, h3, h4, .display { font-family: var(--font-display); font-weight: 600; l
 .btn:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--borde-fuerte); }
 .btn:active:not(:disabled) { transform: translateY(1px); }
 .btn:disabled { opacity: 0.42; cursor: not-allowed; }
+
+/* El icono que gira mientras una acción viaja al servidor. Sin él, "Sincronizando
+   sala…" es un texto quieto y no se distingue de un botón trabado. */
+.girando { animation: girar 1s linear infinite; }
+@keyframes girar { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .girando { animation: none; } }
 .btn .material-symbols-rounded { font-size: 19px; }
 
 .btn-primario {
@@ -480,6 +486,119 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
 .video-espera p { color: var(--txt-dim); font-size: 13.5px; max-width: 46ch; }
 
 .panel-lado { display: flex; flex-direction: column; gap: var(--sp-3); }
+
+/* ── Pantalla completa PROPIA ─────────────────────────────────────────────
+   La de Jitsi maximiza solo su iframe y deja afuera lo del portal: los botones
+   de producción, la cuenta regresiva y el festejo. Acá se agranda el contenedor
+   ENTERO —video + panel— y en ese modo el panel pasa a flotar sobre el video en
+   vez de comerle la mitad del ancho.                                        */
+.btn-pantalla {
+  position: absolute; top: 10px; right: 10px; z-index: 4;
+  width: 38px; height: 38px; display: grid; place-items: center;
+  border-radius: 10px; cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(7, 19, 34, 0.62);
+  color: #e8eefc;
+  backdrop-filter: blur(6px);
+  opacity: 0.5;
+  transition: opacity var(--t-corto, 140ms), background var(--t-corto, 140ms);
+}
+.btn-pantalla:hover, .btn-pantalla:focus-visible { opacity: 1; background: rgba(7, 19, 34, 0.85); }
+.btn-pantalla .material-symbols-rounded { font-size: 21px; }
+
+.sala-layout:fullscreen {
+  display: block;
+  background: var(--fondo, #060b14);
+  padding: 0;
+}
+.sala-layout:fullscreen > div:first-child { height: 100%; }
+.sala-layout:fullscreen .video-marco {
+  height: 100%;
+  aspect-ratio: auto;
+  border: 0;
+  border-radius: 0;
+}
+
+/* El panel deja de ser una columna y pasa a flotar sobre el video. Sigue siendo
+   el MISMO panel: no hay una segunda versión de estos bloques que mantener. */
+.sala-layout:fullscreen .panel-lado {
+  position: absolute; top: 14px; right: 14px; z-index: 5;
+  width: 330px; max-height: calc(100% - 28px);
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.sala-layout:fullscreen .panel-lado .bloque {
+  background: rgba(11, 22, 38, 0.82);
+  backdrop-filter: blur(10px);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+/* Con el panel escondido, el video queda limpio de punta a punta. */
+.sala-layout:fullscreen.panel-oculto .panel-lado { display: none; }
+/*
+ * 🔴 En pantalla completa los dos controles se van a la IZQUIERDA.
+ *
+ * A la derecha quedaban DEBAJO del panel flotante —que ocupa esa esquina— y el
+ * botón de salir de pantalla completa se volvía inalcanzable: se entra y no se
+ * puede volver salvo con Escape, que no todo el mundo sabe. Lo encontró una
+ * captura de pantalla; ningún check lo habría visto, porque el botón seguía en el
+ * DOM y seguía respondiendo al clic.
+ *
+ * Se sube además el z-index por encima del panel: la posición ya los separa, pero
+ * si algún día el panel se ensancha, no se vuelven a perder.
+ */
+.sala-layout:fullscreen .btn-pantalla { top: 14px; right: auto; left: 14px; z-index: 7; }
+.sala-layout:fullscreen #btnPanel { top: 14px; right: auto; left: 60px; }
+
+/* ── Pantalla completa EN EL TELÉFONO ─────────────────────────────────────
+   🔴 El panel flotante de 330 px tapa el 85 % de una pantalla de 390: el video
+   —que es todo el punto de la pantalla completa— quedaba invisible, y los dos
+   controles quedaban encima de un bloque lleno de texto.
+
+   En pantalla angosta el panel deja de flotar al costado y se apoya ABAJO, como
+   una franja que ocupa a lo sumo el 45 % del alto. El video sigue viéndose y el
+   botón del ojo la saca del todo.
+
+   Y los controles pasan a 44 px: 38 alcanza con un mouse, no con un pulgar. */
+@media (max-width: 760px) {
+  .sala-layout:fullscreen .panel-lado {
+    top: auto; left: 0; right: 0; bottom: 0;
+    width: auto;
+    max-height: 45%;
+    padding: 10px 12px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    background: linear-gradient(to top, rgba(6, 11, 20, 0.97), rgba(6, 11, 20, 0.72));
+  }
+  .sala-layout:fullscreen .btn-pantalla { width: 44px; height: 44px; opacity: 0.72; }
+  .sala-layout:fullscreen #btnPanel { left: 66px; }
+}
+
+/* Sin mouse no hay `hover`, así que los controles no pueden depender de él para
+   verse. Con dedo van siempre a opacidad plena y con el tamaño mínimo cómodo. */
+@media (pointer: coarse) {
+  .btn-pantalla { width: 44px; height: 44px; opacity: 0.72; }
+}
+
+/* El botón de esconder el panel solo existe en pantalla completa: fuera de ahí el
+   panel es una columna del layout y esconderla dejaría un hueco. */
+/*
+ * 🔴 Los dos iconos de cada botón viven en el HTML y se alternan con CSS.
+ *
+ * Cambiarlos desde JavaScript (`textContent = 'fullscreen_exit'`) obliga a acertar
+ * en cada camino de salida —el botón, la tecla Escape, el botón del navegador— y
+ * cualquier olvido deja el icono diciendo lo contrario de lo que pasa. Además el
+ * auditor de iconos solo ve los que están escritos al lado del <span>: un icono
+ * asignado desde JS no lo detecta, y al no verlo usado lo daría por sobrante y
+ * alguien lo borraría de `icon_names`. Ahí el botón mostraría la PALABRA.
+ */
+.ico-full { display: none; }
+.sala-layout:fullscreen .ico-normal { display: none; }
+.sala-layout:fullscreen .ico-full { display: inline; }
+/* Con el panel escondido, el botón vuelve a ofrecer mostrarlo. */
+.sala-layout:fullscreen.panel-oculto #btnPanel .ico-full { display: none; }
+.sala-layout:fullscreen.panel-oculto #btnPanel .ico-normal { display: inline; }
+
+#btnPanel { display: none; }
+.sala-layout:fullscreen #btnPanel { display: grid; position: absolute; z-index: 7; }
 
 .bloque {
   border: 1px solid var(--borde);
