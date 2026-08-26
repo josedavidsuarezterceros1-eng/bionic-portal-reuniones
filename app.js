@@ -660,30 +660,44 @@ var Jitsi = (function () {
         // hayamos escrito nosotros, así que va en el idioma de la casa.
         defaultLanguage: 'es',
         /*
-         * 🔴 Lista blanca de botones de Jitsi, y `fullscreen` NO está a propósito.
+         * ════════════════════════════════════════════════════════════════════
+         * 🔴 ESTO ES UNA LISTA BLANCA: lo que no esté acá DESAPARECE de la barra.
+         * ════════════════════════════════════════════════════════════════════
          *
-         * La pantalla completa de Jitsi maximiza solo su iframe y deja afuera los
-         * botones de producción, la cuenta regresiva y el festejo: quien la usara
-         * perdería justo lo que vino a mirar. El portal pone la suya, que agranda
-         * el contenedor entero.
+         * Es la lista COMPLETA de Jitsi (config.js del proyecto, 32 botones) menos
+         * DOS. Se escribe entera a propósito, aunque sea larga: la primera versión
+         * listó solo los 13 que se me ocurrieron y **borró 18 funciones sin que
+         * nadie lo pidiera** — entre ellas compartir video por enlace, que el dueño
+         * usaba, y el cambio de cámara del teléfono. Nadie ve un error: las
+         * funciones simplemente ya no están, y hay que acordarse de que existían.
          *
-         * Tampoco va `feedback` (encuesta de 8x8, ajena a la empresa) ni `invite`
-         * (a esta sala se entra por el portal, que es quien valida el cargo).
+         * Los DOS que se sacan, y por qué:
          *
-         * ⚠️ Es una lista BLANCA: lo que no esté acá desaparece de la barra. Al
-         * agregar una función de Jitsi hay que sumarla, o simplemente no se ve.
+         *   · `fullscreen` — la pantalla completa de Jitsi maximiza SOLO su iframe y
+         *     deja afuera los botones de producción, la cuenta regresiva y el
+         *     festejo: quien la usara perdería justo lo que vino a mirar. El portal
+         *     pone la suya, que agranda el contenedor entero.
+         *   · `feedback` — encuesta de 8x8, ajena a la empresa. Pedido del dueño.
+         *
+         * ⚠️ Si Jitsi agrega un botón nuevo, NO va a aparecer hasta que se sume acá.
+         * Es el precio de poder esconder esos dos: no existe una lista negra.
+         *
+         * ⚠️ `toggle-camera` cambia entre la cámara de adelante y la de atrás y SOLO
+         * sale en el teléfono: en la computadora no se nota si falta, y en el celular
+         * ata a la persona a la cámara que le tocó.
+         *
+         * ⚠️ Nada de nombres inventados: `filmstrip` estuvo en la primera versión y
+         * NO existe en el catálogo de Jitsi — se ignoraba en silencio, dando la
+         * falsa impresión de que esa función estaba contemplada.
          */
         toolbarButtons: [
-          'microphone', 'camera',
-          // ⚠️ `toggle-camera` es el que cambia entre la cámara de adelante y la de
-          // atrás, y SOLO aparece en el teléfono. La primera versión de esta lista lo
-          // dejó afuera: en la computadora no se nota nada, y en el celular —que es
-          // desde donde entra buena parte del equipo— la persona queda atada a la
-          // cámara que le tocó, sin ningún error que explique por qué.
-          'toggle-camera',
-          'desktop', 'chat', 'raisehand',
-          'participants-pane', 'tileview', 'select-background',
-          'videoquality', 'filmstrip', 'settings', 'hangup'
+          'camera', 'chat', 'closedcaptions', 'desktop', 'download',
+          'embedmeeting', 'etherpad', 'hangup', 'help', 'highlight',
+          'invite', 'linktosalesforce', 'livestreaming', 'microphone',
+          'noisesuppression', 'participants-pane', 'profile', 'raisehand',
+          'recording', 'security', 'select-background', 'settings',
+          'shareaudio', 'sharedvideo', 'shortcuts', 'stats', 'tileview',
+          'toggle-camera', 'videoquality', 'whiteboard'
         ]
       },
       interfaceConfigOverwrite: {
