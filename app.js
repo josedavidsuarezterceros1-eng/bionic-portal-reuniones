@@ -628,10 +628,19 @@ var UI = (function () {
       '</span>';
   }
 
+  /*
+   * 🔴 Formato de 24 HORAS, siempre.
+   *
+   * `es-BO` sin `hour12:false` devuelve "03:02 p. m." — y la oficina habla de las
+   * 8:00 y las 14:00, igual que el manual y que el modelo operativo. Justo en la
+   * pantalla que existe para que nadie discuta una hora, un "p. m." obliga a
+   * traducir mentalmente y deja lugar a la duda que veníamos a sacar. De paso,
+   * ese formato termina en punto y dejaba un ".." al lado del texto.
+   */
   function hora(ts) {
     if (!ts) return '—';
     var d = new Date(ts);
-    return d.toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit', hour12: false });
   }
 
   return { $: $, id: id, esc: esc, mostrar: mostrar, toast: toast, rastro: rastro,
@@ -939,6 +948,8 @@ var Sala = (function () {
     asisValidada: false, // asistencia ya registrada EN ESTA SALA
     redCaida: false,     // para no repetir el aviso de conexión en cada sondeo
     asisFaltan: null,
+    asisIngreso: null,   // a qué hora quedó registrado (lo dice el servidor)
+    asisTarde: false,    // …y si esa hora llegó tarde a la reunión
     videoRoto: false,    // no se pudo montar el video: no se pide más el permiso
     ultimoItem: null,    // para el botón de repetir sirena
     ceroPedido: null     // finTs para el que ya se pidió la consulta del segundo cero
@@ -969,6 +980,8 @@ var Sala = (function () {
     // reunión no se registra nunca — sin ningún error a la vista.
     S.asisValidada = false;
     S.asisFaltan = null;
+    S.asisIngreso = null;
+    S.asisTarde = false;
     S.redCaida = false;
     S.ceroPedido = null;
     // ⚠️ Se limpia POR SALA, como todo lo demás: que el video no haya podido
@@ -1086,12 +1099,23 @@ var Sala = (function () {
     UI.toast('Conexión restablecida.', 'ok');
   }
 
+  /** ¿Hay algo que mirar en el panel ahora mismo? Cuenta regresiva o destape.
+   *  Lo usan la cadencia del sondeo y la apertura automática del panel. */
+  function hayShow(est) {
+    var f = est && est.ronda && est.ronda.fase;
+    return f === 'countdown' || f === 'reveal';
+  }
+
   function cadencia() {
     var fase = S.estado && S.estado.ronda && S.estado.ronda.fase;
     return (fase === 'countdown' || fase === 'reveal') ? Cfg.POLL_ACTIVO_MS : Cfg.POLL_SALA_MS;
   }
 
   function aplicar(r) {
+    // Se leen ANTES de pisar S.estado: las dos cosas van por TRANSICIÓN.
+    var eraAnfitrion = !!(S.estado && S.estado.soyAnfitrion);
+    // Se lee ANTES de pisar S.estado: la apertura del panel va por transición.
+    var showAntes = hayShow(S.estado);
     /*
      * 🔴 Si me sacaron la sala, tengo que enterarme por un cartel, no por deducirlo.
      *
@@ -1140,6 +1164,47 @@ var Sala = (function () {
     // `confirmarModeradorEnServidor`. Si la confirmación se perdió, esto la
     // reintenta hasta que el servidor diga que la sala está abierta.
     if (S.soyModeradorJitsi && r.soyAnfitrion && !r.sala.abierta) confirmarModeradorEnServidor();
+
+    /*
+     * El estado de la asistencia viaja TAMBIÉN en el sondeo, no solo en la
+     * respuesta del latido.
+     *
+     * 🔴 El latido se APAGA al validar y no corre con la cámara apagada, así que
+     * quien vuelve a entrar a la sala se quedaba sin saber si ya estaba anotado ni
+     * a qué hora: el panel le pedía encender la cámara a alguien que ya había
+     * cumplido. Manda el servidor, que es el único que lo sabe de verdad.
+     */
+    if (r.asistencia) {
+      if (r.asistencia.validado) S.asisValidada = true;
+      if (r.asistencia.ingreso) S.asisIngreso = r.asistencia.ingreso;
+      S.asisTarde = !!r.asistencia.tarde;
+      if (S.asisFaltan == null && r.asistencia.faltanMin != null) {
+        S.asisFaltan = r.asistencia.faltanMin;
+      }
+    }
+
+    /*
+     * 🔴 El panel se ABRE SOLO cuando arranca el show, y se vuelve a esconder al
+     * terminar. Para TODOS, no solo para el anfitrión.
+     *
+     * En pantalla completa el panel arranca escondido (pantalla limpia, decisión
+     * del dueño ago 2026). Sin esta apertura automática, el anfitrión pedía
+     * producción y quien tuviera el panel escondido **no veía nada**: ni la cuenta
+     * regresiva ni los botones de "¡Tengo Matrícula!". Un asesor nuevo ni siquiera
+     * sabe que existe el ojito, así que se perdía su propia venta sin entender por
+     * qué — y nadie se entera, porque en pantalla no falla nada.
+     *
+     * Se dispara por TRANSICIÓN, no por estado: si se llamara en cada sondeo,
+     * volvería a abrir el panel dos segundos después de que la persona lo cierre a
+     * mano en medio de la ronda.
+     */
+    // Recién ahora se sabe que es anfitrión: si está en pantalla completa con la
+    // pantalla limpia, le falta el botón de pedir producción.
+    if (!eraAnfitrion && r.soyAnfitrion) Pantalla.alAscenderAAnfitrion();
+
+    if (showAntes !== hayShow(r)) {
+      if (hayShow(r)) Pantalla.abrirPorRonda(); else Pantalla.cerrarPorRonda();
+    }
 
     detectarDestape(r.ronda);
     render();
@@ -1314,7 +1379,21 @@ var Sala = (function () {
     if (!Jitsi.disponible() || S.videoRoto) {
       icono.textContent = 'wifi_off';
       titulo.textContent = 'No se pudo cargar el video';
-      txt.textContent = 'Jitsi no respondió. Revise la conexión y recargue la página; el resto del portal sigue funcionando.';
+      /*
+       * 🔴 Si el que se quedó sin video es EL ANFITRIÓN, el problema no es suyo: es
+       * de toda la filial. La sala se abre cuando Jitsi le da moderador a él, así
+       * que sin su video NADIE ve la reunión — y los demás solo leen "Abriendo la
+       * sala…", para siempre, sin ninguna pista de qué pasó ni de que hay que
+       * pasarle la sala a otro.
+       *
+       * El aviso de "la videollamada no terminó de abrir" NO cubre esto: se arma al
+       * final de montar el video, y acá el video no llegó a montarse nunca. O sea
+       * que justo en el caso en que hace falta, no salta. Por eso se dice acá.
+       */
+      txt.textContent = r.soyAnfitrion
+        ? 'Usted tiene la sala, pero sin video la reunión no se abre para nadie. ' +
+          'Recargue la página; si sigue igual, libere la sala para que otro pueda abrirla.'
+        : 'Jitsi no respondió. Revise la conexión y recargue la página; el resto del portal sigue funcionando.';
       return;
     }
     if (r.anfitrion) {
@@ -1590,10 +1669,31 @@ var Sala = (function () {
       cont.innerHTML = '<p style="font-size:13px;color:var(--txt-dim)">Se registra durante la reunión.</p>';
       return;
     }
+    /*
+     * 🔴 Se le dice a QUÉ HORA quedó registrado, y si llegó tarde.
+     *
+     * Decisión del dueño (ago 2026): las reuniones son a las 8:00 y a las 14:00 y
+     * un minuto después ya es tarde. Un "Asistencia registrada" a secas no le
+     * sirve a nadie para eso — la persona no tiene forma de saber con qué hora
+     * quedó, y se entera recién si alguien se lo reclama días después.
+     *
+     * ⚠️ Quién llegó tarde lo decide el SERVIDOR (`asisTarde_`). Acá no se compara
+     * ninguna hora: sería una segunda copia de la regla, y con el reloj del
+     * navegador, que puede estar corrido. El portal solo lo muestra.
+     */
     if (S.asisValidada) {
-      cont.innerHTML = '<div class="aviso aviso-ok">' +
-        '<span class="material-symbols-rounded">verified</span>' +
-        '<span>Asistencia registrada.</span></div>';
+      var hIng = S.asisIngreso ? UI.hora(S.asisIngreso) : null;
+      cont.innerHTML = S.asisTarde
+        ? '<div class="aviso aviso-error">' +
+            '<span class="material-symbols-rounded">running_with_errors</span>' +
+            '<span><strong>Ingreso tardío</strong>' +
+            (hIng ? '<br>Quedó registrado a las ' + UI.esc(hIng) + '.' : '') +
+            '</span></div>'
+        : '<div class="aviso aviso-ok">' +
+            '<span class="material-symbols-rounded">verified</span>' +
+            '<span><strong>Asistencia registrada</strong>' +
+            (hIng ? '<br>Hora de ingreso: ' + UI.esc(hIng) + '.' : '') +
+            '</span></div>';
       return;
     }
     /*
@@ -1896,10 +1996,22 @@ var Sala = (function () {
       .then(function (r) {
         if (!r || !r.ok) return;
         S.asisFaltan = (r.faltanMin != null) ? r.faltanMin : r.faltan;
+        // La hora de ingreso y la puntualidad las decide el SERVIDOR; acá solo
+        // se guardan para pintarlas. Ver `renderAsistencia`.
+        if (r.ingreso != null) S.asisIngreso = r.ingreso;
+        S.asisTarde = !!r.tarde;
         if (r.validado) {
           S.asisValidada = true;
           clearInterval(S.timerAsis); S.timerAsis = null;
-          UI.toast('Asistencia registrada.', 'ok');
+          /*
+           * El aviso lleva la HORA, y dura más si llegó tarde: es el momento en
+           * que la persona se entera de con qué hora quedó, y un cartel de 3,8 s
+           * que dice algo que después le van a reclamar no alcanza.
+           */
+          UI.toast(S.asisTarde
+            ? 'Ingreso tardío: quedó registrado a las ' + UI.hora(S.asisIngreso) + '.'
+            : 'Asistencia registrada. Hora de ingreso: ' + UI.hora(S.asisIngreso) + '.',
+            S.asisTarde ? 'error' : 'ok', 8000);
         }
         renderAsistencia();
       })
@@ -1931,6 +2043,11 @@ var Sala = (function () {
   return {
     entrar: entrar, salir: salir,
     activa: function () { return !!S.sala; },
+    /* Los dos datos que `Pantalla` necesita para decidir si el panel arranca
+       abierto o limpio. Se preguntan; no se copian, para que no haya una segunda
+       versión del estado dando vueltas. */
+    soyAnfitrion: function () { return !!(S.estado && S.estado.soyAnfitrion); },
+    hayRonda: function () { return hayShow(S.estado); },
     alEntrarAJitsi: alEntrarAJitsi,
     alColgar: alColgar,
     alCambiarRol: alCambiarRol,
@@ -2022,11 +2139,42 @@ var Pantalla = (function () {
     });
   }
 
-  function alternarPanel() {
+  /*
+   * ════════════════════════════════════════════════════════════════════════
+   * EL PANEL: pantalla limpia por defecto, y se abre solo cuando hay show
+   * ════════════════════════════════════════════════════════════════════════
+   *
+   * Decisión del dueño (ago 2026). En pantalla completa —que es como se proyecta
+   * la reunión— el panel arranca ESCONDIDO: se ve el video y nada más.
+   *
+   * 🔴 Con UNA excepción: el ANFITRIÓN arranca con el panel abierto. El botón de
+   * "Pedir producción" vive ahí adentro; si a él también le arrancara limpio,
+   * tendría que acordarse de destapar el panel para poder abrir la ronda, delante
+   * de toda la filial.
+   *
+   * Y cuando el show empieza, el panel se abre SOLO para todos (ver
+   * `abrirPorRonda`, llamado desde `Sala.aplicar`), porque si no, quien lo tenía
+   * escondido no ve ni la cuenta regresiva ni los botones de producción.
+   *
+   * ⚠️ Nada de esto se guarda entre sesiones. Alcanzaría con haberlo dejado
+   * abierto una vez para que apareciera proyectado en la reunión siguiente sin que
+   * nadie lo pidiera; mismo criterio que el check de agendamiento cruzado del
+   * Tablero, que también arranca apagado a propósito.
+   */
+  var previoRonda = null;      // cómo estaba el panel ANTES del show (null = no hay show)
+  var manualEnRonda = false;   // tocó el ojito DURANTE el show: su decisión gana
+  var manualDesdeEntrar = false;  // tocó el ojito desde que entró a pantalla completa
+
+  function panelOculto() {
+    var el = elemento();
+    return !!(el && el.classList.contains('panel-oculto'));
+  }
+
+  function ponerPanel(oculto) {
     var el = elemento();
     if (!el) return;
     // El icono lo alterna el CSS a partir de esta clase: ver `.ico-full`.
-    var oculto = el.classList.toggle('panel-oculto');
+    el.classList.toggle('panel-oculto', !!oculto);
     var b = UI.id('btnPanel');
     if (b) {
       var txt = oculto ? 'Mostrar el panel' : 'Esconder el panel';
@@ -2035,16 +2183,85 @@ var Pantalla = (function () {
     }
   }
 
+  function alternarPanel() {
+    ponerPanel(!panelOculto());
+    /* Si lo tocó con el show en curso, manda él: al terminar la ronda no se le
+       mueve la pantalla por debajo. Lo automático está para el que no hizo nada. */
+    if (previoRonda !== null) manualEnRonda = true;
+    manualDesdeEntrar = true;
+  }
+
+  /**
+   * 🔴 Se volvió anfitrión DESPUÉS de entrar a pantalla completa.
+   *
+   * Al entrar a una sala libre, la toma automática tarda un viaje al servidor,
+   * así que quien aprieta pantalla completa enseguida todavía figura como "no
+   * anfitrión" y le arranca la pantalla limpia — sin el botón de "Pedir
+   * producción", que es justo lo que vino a hacer. Le pasó al test del teléfono
+   * antes que a nadie, y en la reunión iba a pasar igual.
+   *
+   * ⚠️ Solo si NO tocó el ojito desde que entró: si lo cerró a propósito, no se
+   * le vuelve a abrir la pantalla por debajo.
+   */
+  function alAscenderAAnfitrion() {
+    if (!activa() || manualDesdeEntrar || previoRonda !== null) return;
+    ponerPanel(false);
+  }
+
+  /** Arranca el show: se abre el panel para todos, guardando a dónde volver. */
+  function abrirPorRonda() {
+    if (!activa()) return;                 // fuera de pantalla completa el panel ya se ve
+    if (previoRonda === null) previoRonda = panelOculto();
+    manualEnRonda = false;
+    ponerPanel(false);
+  }
+
+  /** Terminó el show: vuelve a como estaba, salvo que la persona haya decidido. */
+  function cerrarPorRonda() {
+    var prev = previoRonda, manual = manualEnRonda;
+    previoRonda = null;
+    manualEnRonda = false;
+    if (!activa() || prev === null || manual) return;
+    ponerPanel(prev);
+  }
+
+  /**
+   * Estado del panel al ENTRAR a pantalla completa.
+   *
+   * ⚠️ Si justo hay un show en curso se abre igual, y se anota que al terminar hay
+   * que volver al default. Sin esto, entrar a pantalla completa en mitad de una
+   * ronda dejaba la pantalla limpia —o sea, sin la cuenta regresiva— que es
+   * exactamente lo que este cambio viene a evitar.
+   */
+  function arrancarPanel() {
+    var limpio = !Sala.soyAnfitrion();
+    manualEnRonda = false;
+    manualDesdeEntrar = false;
+    if (Sala.hayRonda()) {
+      previoRonda = limpio;
+      ponerPanel(false);
+    } else {
+      previoRonda = null;
+      ponerPanel(limpio);
+    }
+  }
+
   function alCambiar() {
     var el = elemento();
     // El icono lo alterna el CSS con `:fullscreen`: no hay estado que sincronizar.
-    if (activa() && el) mudar(el);
-    else {
+    if (activa() && el) {
+      mudar(el);
+      arrancarPanel();
+    } else {
       devolver();
       // Al salir, el panel vuelve a ser una columna del layout: dejarlo escondido
       // dejaría un hueco al costado y ningún botón a la vista para recuperarlo
       // (el de esconderlo solo se ve en pantalla completa).
       if (el) el.classList.remove('panel-oculto');
+      // Y se olvida el show en curso: si vuelve a entrar, `arrancarPanel` decide
+      // otra vez desde cero. Guardarlo sería arrastrar un estado que ya no aplica.
+      previoRonda = null;
+      manualEnRonda = false;
     }
   }
 
@@ -2068,6 +2285,9 @@ var Pantalla = (function () {
   return {
     alternar: alternar, alternarPanel: alternarPanel,
     alCambiar: alCambiar, activa: activa, apagar: apagar,
+    abrirPorRonda: abrirPorRonda, cerrarPorRonda: cerrarPorRonda,
+    alAscenderAAnfitrion: alAscenderAAnfitrion,
+    panelOculto: panelOculto,
     ajustarDisponibilidad: ajustarDisponibilidad
   };
 })();
@@ -2252,9 +2472,19 @@ var Asistencia = (function () {
           '<td style="font-weight:600">' + UI.esc(l.nombre) + '</td>' +
           '<td style="color:var(--txt-dim);font-size:12.5px">' + UI.esc(l.cargo) + '</td>' +
           '<td style="color:var(--txt-dim)">' + UI.esc(l.sala) + '</td>' +
-          '<td>' + UI.hora(l.timestamp) + '</td>' +
+          /*
+           * 🔴 La hora se marca en ROJO si llegó tarde, y lo decide el servidor
+           * (`asisTarde_`). Sin la marca, la columna es una lista de horas que hay
+           * que comparar de memoria contra las 8:00 y las 14:00 fila por fila —
+           * justo lo que esta pantalla existe para evitar.
+           */
+          '<td' + (l.tarde ? ' style="color:var(--rojo,#ef4444);font-weight:600"' : '') + '>' +
+            UI.hora(l.timestamp) + (l.tarde ? ' ⚠' : '') + '</td>' +
           '<td><span class="chip ' + (l.validado ? 'chip-verde' : 'chip-ambar') + '">' +
-            (l.validado ? 'Validado' : 'Parcial') + '</span></td>' +
+            (l.validado ? 'Validado' : 'Parcial') + '</span>' +
+            // Rojo, igual que la hora: un chip ámbar al lado de una hora roja se lee
+            // como dos gravedades distintas para el mismo hecho.
+            (l.tarde ? ' <span class="chip chip-rojo">Tarde</span>' : '') + '</td>' +
         '</tr>';
       }).join('') +
       '</tbody></table></div>';
