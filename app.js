@@ -666,11 +666,11 @@ var Jitsi = (function () {
    * el permiso firmado.
    */
   function montar(entrada, usuario) {
-    if (salaMontada === entrada.sala && api) return;
+    if (salaMontada === entrada.sala && api) return true;
     desmontar();
 
     var cont = UI.id('jitsiCont');
-    if (!cont || !disponible()) return;
+    if (!cont || !disponible()) return false;
 
     var opciones = {
       roomName: entrada.sala,
@@ -774,8 +774,15 @@ var Jitsi = (function () {
       }
     };
 
+    /*
+     * ⚠️ Devuelve si la sala quedó montada DE VERDAD, y el llamador lo mira.
+     *
+     * Mientras esto no devolvía nada, un fallo del constructor se veía igual que
+     * un montaje exitoso desde afuera: el portal volvía a pedir el permiso de
+     * entrada en cada sondeo, para siempre. Ver `pedirEntradaYMontar`.
+     */
     try { api = new window.JitsiMeetExternalAPI(entrada.dominio, opciones); }
-    catch (e) { api = null; return; }
+    catch (e) { api = null; UI.rastro('Jitsi no se pudo montar', e && e.message); return false; }
 
     salaMontada = entrada.sala;
 
@@ -873,6 +880,7 @@ var Jitsi = (function () {
     // aceptado. Se avisa en vez de dejar la sala trabada en silencio.
     clearTimeout(avisoModTimer);
     avisoModTimer = setTimeout(function () { Sala.avisarModeradorDemorado(); }, Cfg.MOD_AVISO_MS);
+    return true;
   }
 
   function desmontar() {
@@ -931,6 +939,7 @@ var Sala = (function () {
     asisValidada: false, // asistencia ya registrada EN ESTA SALA
     redCaida: false,     // para no repetir el aviso de conexión en cada sondeo
     asisFaltan: null,
+    videoRoto: false,    // no se pudo montar el video: no se pide más el permiso
     ultimoItem: null,    // para el botón de repetir sirena
     ceroPedido: null     // finTs para el que ya se pidió la consulta del segundo cero
   };
@@ -962,6 +971,10 @@ var Sala = (function () {
     S.asisFaltan = null;
     S.redCaida = false;
     S.ceroPedido = null;
+    // ⚠️ Se limpia POR SALA, como todo lo demás: que el video no haya podido
+    // montarse en una sala no puede dejar sin video a la siguiente. Y si el
+    // problema era la librería sin cargar, la próxima vez vuelve a marcarse sola.
+    S.videoRoto = false;
     // "Ya se decidió algo sobre esta sala en esta visita". Ver `autoTomarSala`.
     S.autoTomaResuelta = false;
     poll();
@@ -1146,14 +1159,44 @@ var Sala = (function () {
    */
   var pidiendoEntrada = false;
 
+  /*
+   * 🔴 EL FRENO DE VERDAD, y no alcanzaba con `Jitsi.montada()`.
+   *
+   * `montada()` es "existe el objeto de Jitsi". Si la librería de Jitsi no cargó
+   * —la CDN bloqueada por el firewall de la oficina, la red caída— ese objeto NO
+   * SE CREA NUNCA, así que `montada()` se queda en false para siempre y el freno
+   * no frena nada: el portal vuelve a pedir el permiso de entrada en CADA sondeo.
+   *
+   * Medido con una sonda: 5 sondeos = 5 permisos en 20 segundos. Y cada permiso es
+   * una firma RSA en el servidor. En reposo son ~17 por minuto y por persona;
+   * durante una ronda el sondeo baja a 2 s, o sea ~30 por minuto — contra un Apps
+   * Script que admite 30 ejecuciones simultáneas para TODA la filial. El portal se
+   * ahoga solo justo en el festejo, y en pantalla solo dice que no cargó el video,
+   * así que cada uno culpa a su propio internet.
+   *
+   * `videoRoto` marca "ya intenté y no se puede": corta los pedidos hasta que se
+   * cambie de sala (`entrar` lo limpia). Un fallo del PEDIDO no lo enciende, a
+   * propósito: ese sí conviene reintentarlo, es el 404 pasajero del transporte.
+   */
   function pedirEntradaYMontar() {
     if (Jitsi.montada() || pidiendoEntrada || !S.sala) return;
+    if (S.videoRoto) return;
+    // Sin la librería no hay nada que montar: pedir el permiso es trabajo del
+    // servidor tirado a la basura, y encima repetido cada 2 segundos.
+    if (!Jitsi.disponible()) { S.videoRoto = true; render(); return; }
+
     pidiendoEntrada = true;
     API.get({ accion: 'videoEntrada', token: Sesion.token, salaId: S.sala.id })
       .then(function (r) {
         if (!S.sala) return;
         if (!r || !r.ok) { UI.toast((r && r.message) || 'No se pudo abrir la videollamada.', 'error'); return; }
-        Jitsi.montar(r, Sesion.usuario);
+        if (!Jitsi.montar(r, Sesion.usuario)) {
+          // El permiso llegó bien y aun así no se pudo montar. Se deja de pedir y
+          // se dice qué pasó: si no, la pantalla queda en "Abriendo la sala…" para
+          // siempre mientras el servidor firma permisos que nadie usa.
+          S.videoRoto = true;
+          UI.rastro('el permiso llegó pero el video no se pudo montar: se deja de pedir');
+        }
         render();
       })
       .catch(function (e) { if (S.sala) UI.toast(e.message || 'No se pudo abrir la videollamada.', 'error'); })
@@ -1256,7 +1299,19 @@ var Sala = (function () {
     var accion = UI.id('esperaAccion');
     accion.innerHTML = '';
 
-    if (!Jitsi.disponible()) {
+    /*
+     * ⚠️ `videoRoto` también entra acá: el permiso llegó bien y aun así el video no
+     * se pudo montar. Sin esta rama, ese caso dejaba la pantalla en "Abriendo la
+     * sala…" para siempre — un cartel que promete algo que ya se sabe que no va a
+     * pasar.
+     *
+     * 🔴 El icono `wifi_off` TIENE que estar en la lista `icon_names` de index.html.
+     * Si falta, acá no sale el dibujo: sale la PALABRA "wifi_off" escrita, en la
+     * única pantalla que la persona mira cuando ya sospecha que algo se rompió.
+     * Estuvo así hasta ago 2026 y ningún check lo vio (el auditor de iconos solo
+     * miraba los escritos al lado del <span>, no los que asigna el JavaScript).
+     */
+    if (!Jitsi.disponible() || S.videoRoto) {
       icono.textContent = 'wifi_off';
       titulo.textContent = 'No se pudo cargar el video';
       txt.textContent = 'Jitsi no respondió. Revise la conexión y recargue la página; el resto del portal sigue funcionando.';
@@ -1416,7 +1471,11 @@ var Sala = (function () {
     var ronda = r.ronda || {};
     var firma = [
       r.sala.abierta, ronda.fase, ronda.rondaId, r.soyAnfitrion,
-      S.registreEn === ronda.rondaId
+      // ⚠️ Va el "ya anotó" COMPLETO —el del servidor incluido—, no solo la memoria
+      // de esta pestaña. Si la firma mirara únicamente `S.registreEn`, anotar desde
+      // el celular no repintaría la computadora: el estado cambia y el bloque no se
+      // entera, que es la trampa que `pintarSi` tiene siempre a mano.
+      !!ronda.yaRegistre || S.registreEn === ronda.rondaId
     ].join('|');
 
     if (!r.sala.abierta) {
@@ -1470,7 +1529,24 @@ var Sala = (function () {
    * registrar nada: creería que su venta quedó anotada.
    */
   function renderCountdown(ronda, cont, firma) {
-    var yaAnote = S.registreEn === ronda.rondaId;
+    /*
+     * 🔴 Manda el SERVIDOR, no la memoria de esta pestaña.
+     *
+     * `S.registreEn` vive en la pestaña, así que se perdía al recargar la página —
+     * y con eso volvían los dos botones como si no hubiera anotado nada. La persona
+     * apretaba de nuevo y se comía un cartel rojo ("Ya registró su producción en
+     * esta ronda") en pleno festejo, habiendo hecho todo bien. Lo mismo le pasaba a
+     * quien además está mirando desde el celular.
+     *
+     * La venta nunca corrió peligro —`registrarProduccion_` rechaza el duplicado—,
+     * pero el portal la trataba como si se hubiera equivocado.
+     *
+     * ⚠️ `yaRegistre` es sobre UNO MISMO y nada más. No confundir con el viejo
+     * `puedoRegistrar`, que llevaba adentro si la cola seguía abierta: atarle el
+     * botón habría apagado los de TODA la sala en los countdowns de teatro y ahí se
+     * cae el suspenso entero. Ver el comentario en `rondaPublica_`.
+     */
+    var yaAnote = !!ronda.yaRegistre || S.registreEn === ronda.rondaId;
 
     var html =
       '<div class="countdown">' +
@@ -2163,7 +2239,11 @@ var Asistencia = (function () {
     }
     cont.innerHTML =
       '<div class="tabla-scroll"><table><thead><tr>' +
-        '<th>Fecha</th><th>Turno</th><th>Nombre</th><th>Cargo</th><th>Sala</th><th>Hora</th><th>Estado</th>' +
+        // "Ingreso", no "Hora": desde ago 2026 la hora guardada es la de PRENDER LA
+        // CÁMARA, no la de completar los minutos. Con el rótulo viejo la columna
+        // seguía diciendo lo mismo y significando otra cosa, que es la peor forma
+        // de cambiar un dato que la gente usa para saber quién llegó a horario.
+        '<th>Fecha</th><th>Turno</th><th>Nombre</th><th>Cargo</th><th>Sala</th><th>Ingreso</th><th>Estado</th>' +
       '</tr></thead><tbody>' +
       logs.map(function (l) {
         return '<tr>' +
