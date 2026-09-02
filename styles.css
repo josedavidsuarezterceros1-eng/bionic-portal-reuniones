@@ -807,6 +807,35 @@ tbody tr:hover { background: var(--surface); }
   display: flex; flex-direction: column; gap: 9px;
   max-width: min(370px, calc(100vw - 32px));
 }
+
+/* 🔴 En el TELÉFONO los avisos van ARRIBA, no abajo.
+
+   Anclados abajo a la derecha —su lugar en pantalla ancha— caían justo encima del
+   panel del ANFITRIÓN, que en pantalla angosta se apoya abajo. Tapaban "Liberar la
+   sala" los 3,8 s que vive un aviso, y 6 s si era de error, exactamente cuando el
+   anfitrión mira ese panel porque acaba de abrir la reunión.
+
+   Ningún check lo vio y no podía verlo: el botón seguía en el DOM y respondía al
+   clic. Lo encontró una revisión de las capturas (sep 2026) — el cuarto defecto
+   visual que la suite en verde deja pasar.
+
+   ⚠️ Los 124 px de arriba NO son decorativos, y salen de MEDIR, no de tantear:
+   la topbar termina en 115 px —idéntico en 390, 375 y 320 px de ancho, porque las
+   pestañas ya bajaron a su propio renglón— y los 9 restantes son el mismo `gap`
+   que separa un aviso del siguiente. Pegado al borde tapaba las pestañas: seguía
+   siendo cambiar un choque por otro, apenas más barato.
+
+   De paso cubre el otro caso: en pantalla completa no hay topbar, pero los
+   controles se van arriba a la IZQUIERDA (`top: 14px` + 44 px de alto = 58), así
+   que 124 los despeja igual. Si la topbar o esos controles cambian de alto, este
+   número cambia con ellos. */
+@media (max-width: 760px) {
+  #toasts {
+    top: 124px; bottom: auto;
+    left: 12px; right: 12px;
+    max-width: none;
+  }
+}
 .toast {
   display: flex; align-items: flex-start; gap: 10px;
   padding: 12px 15px;
