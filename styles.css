@@ -626,6 +626,10 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
 .reloj circle { fill: none; stroke-width: 9; stroke-linecap: round; }
 .reloj .pista { stroke: rgba(255, 255, 255, 0.08); }
 .reloj .barra { stroke: var(--azul); transition: stroke-dashoffset 0.95s linear, stroke 400ms; }
+/* La ANTESALA: el anillo entero y el número en el color de acento. No se está
+   agotando nada todavía — se está anunciando, así que nada de rojo ni de latido. */
+.reloj.antesala .barra { stroke: var(--verde); }
+.reloj.antesala .num { color: var(--verde); }
 .reloj.urgente .barra { stroke: var(--ambar); }
 .reloj.critico .barra { stroke: var(--rojo); }
 .reloj .num {

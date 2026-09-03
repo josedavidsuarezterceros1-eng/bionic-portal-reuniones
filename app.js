@@ -1291,8 +1291,16 @@ var Sala = (function () {
     var ronda = S.estado.ronda;
     if (ronda.fase !== 'countdown') return;
 
+    /*
+     * 🔴 Durante la ANTESALA no se le pregunta nada al servidor.
+     *
+     * Su cero no cambia de fase —la ronda ya está en `countdown` desde el anuncio—,
+     * así que un `pollYa` ahí sería un pedido por persona y por ronda que no aporta
+     * nada, justo en el momento en que toda la filial está mirando la misma pantalla.
+     */
+    if (actualizarReloj(ronda)) return;
+
     var seg = Reloj.faltan(ronda.finTs);
-    pintarReloj(seg);
 
     /*
      * Llegó a cero: el servidor ya cambió de fase. Se pregunta enseguida en vez
@@ -1310,19 +1318,66 @@ var Sala = (function () {
     }
   }
 
-  function pintarReloj(seg) {
+  /**
+   * @param {number} seg   segundos a mostrar
+   * @param {number} [total] segundos que representa el anillo lleno. En la ANTESALA
+   *   va `null`: el anillo se deja entero y sin los colores de urgencia, porque ahí
+   *   no se está agotando nada — se está anunciando. Pintarlo como si corriera el
+   *   tiempo haría creer que ya hay que apurarse, y todavía no empezó.
+   */
+  function pintarReloj(seg, total) {
     var num = UI.id('relojNum');
     var barra = UI.id('relojBarra');
     var caja = UI.id('reloj');
     if (!num || !barra || !caja) return;
 
+    var anuncio = (total === null);
     num.textContent = seg;
-    var total = Cfg.COUNTDOWN_MS / 1000;
+    var tot = anuncio ? 1 : (total || Cfg.COUNTDOWN_MS / 1000);
     var largo = 2 * Math.PI * 64;
     barra.style.strokeDasharray = largo;
-    barra.style.strokeDashoffset = largo * (1 - Math.min(1, seg / total));
-    caja.classList.toggle('urgente', seg <= 10 && seg > 5);
-    caja.classList.toggle('critico', seg <= 5);
+    barra.style.strokeDashoffset = anuncio ? 0 : largo * (1 - Math.min(1, seg / tot));
+    caja.classList.toggle('antesala', anuncio);
+    caja.classList.toggle('urgente', !anuncio && seg <= 10 && seg > 5);
+    caja.classList.toggle('critico', !anuncio && seg <= 5);
+  }
+
+  /**
+   * Pinta el reloj según el momento, y devuelve si estamos en la ANTESALA.
+   *
+   * 🔴 La antesala existe porque la noticia de que empezó la ronda NO le llega a
+   * todos junta: medido contra producción, hasta ~9 s tarde. Como el reloj apunta a
+   * un instante absoluto, el que se enteraba tarde veía el conteo aparecer ya en 21
+   * — y si en cambio le diéramos 30 desde que se entera, apretaría creyendo que le
+   * quedan 5 segundos y el servidor le rechazaría la venta. Se anuncia antes y
+   * arranca para todos parejo.
+   */
+  function actualizarReloj(ronda) {
+    var ahora = Reloj.ahora();
+    var enAntesala = !!(ronda.inicioTs && ahora < ronda.inicioTs);
+    var txt = UI.id('relojTxt');
+    var bots = UI.id('botonesProd');
+
+    if (txt) {
+      txt.textContent = enAntesala
+        ? '¡Atención! Viene producción'
+        : (esperaTextoCountdown(ronda));
+    }
+    // Los botones no se muestran en el anuncio: todavía no hay nada que anotar, y
+    // un botón que se puede apretar antes de tiempo es una promesa a medias.
+    if (bots) UI.mostrar(bots, !enAntesala);
+
+    if (enAntesala) {
+      pintarReloj(Math.max(0, Math.ceil((ronda.inicioTs - ahora) / 1000)), null);
+    } else {
+      pintarReloj(Reloj.faltan(ronda.finTs));
+    }
+    return enAntesala;
+  }
+
+  function esperaTextoCountdown(ronda) {
+    return (!!ronda.yaRegistre || S.registreEn === ronda.rondaId)
+      ? 'Producción anotada.' : '¿Producción para festejar?';
   }
 
   /* ── render del panel lateral ──────────────────────────────────────── */
@@ -1636,7 +1691,10 @@ var Sala = (function () {
           '</svg>' +
           '<div class="num" id="relojNum">–</div>' +
         '</div>' +
-        '<p class="countdown-txt">' +
+        // El texto y los botones llevan id porque los alterna `actualizarReloj` cada
+        // segundo: la antesala termina por RELOJ, no por una respuesta del servidor,
+        // así que `pintarSi` no se enteraría de esa transición.
+        '<p class="countdown-txt" id="relojTxt">' +
           (yaAnote ? 'Producción anotada.' : '¿Producción para festejar?') +
         '</p>' +
       '</div>';
@@ -1644,7 +1702,7 @@ var Sala = (function () {
     html += yaAnote
       ? '<div class="ya-registre"><span class="material-symbols-rounded">check_circle</span>' +
         'Nadie más la ve hasta el destape.</div>'
-      : '<div class="botones-produccion">' +
+      : '<div class="botones-produccion" id="botonesProd">' +
           '<button class="btn-produccion btn-matricula" data-tipo="matricula">' +
             '<span class="material-symbols-rounded">workspace_premium</span> ¡Tengo Matrícula!</button>' +
           '<button class="btn-produccion btn-abono" data-tipo="abono">' +
@@ -1656,7 +1714,7 @@ var Sala = (function () {
         b.onclick = function () { anotar(b.getAttribute('data-tipo'), b); };
       });
     }
-    pintarReloj(Reloj.faltan(ronda.finTs));
+    actualizarReloj(ronda);
   }
 
   function renderAsistencia() {
@@ -1867,7 +1925,14 @@ var Sala = (function () {
 
     if (boton) {
       boton.disabled = true;
-      boton.innerHTML = '<span class="material-symbols-rounded girando">sync</span> Sincronizando sala…';
+      /*
+       * Dice lo que VA A PASAR, no lo que el programa está haciendo por dentro.
+       * Antes decía "Sincronizando sala…", que es vocabulario nuestro y no le
+       * anticipa al anfitrión que lo próximo es el anuncio y después el conteo.
+       * Con la antesala eso importa más: entre su clic y el reloj hay unos
+       * segundos, y el botón es lo único que mira mientras tanto.
+       */
+      boton.innerHTML = '<span class="material-symbols-rounded girando">sync</span> Preparando el conteo…';
     }
 
     var restaurar = function () {
@@ -1884,7 +1949,7 @@ var Sala = (function () {
      * ⚠️ Pero el repintado solo ocurre si el estado CAMBIA (`pintarSi` compara una
      * firma). Un "ok" del servidor sin ronda a la vista dejaría el botón trabado
      * para siempre, y sin manera de pedir producción en toda la reunión. Por eso el
-     * plazo: si a los 10 s el botón sigue diciendo "Sincronizando", vuelve solo.
+     * plazo: si a los 10 s el botón sigue diciendo "Preparando", vuelve solo.
      */
     accion({ accion: 'iniciarRonda', token: Sesion.token, salaId: S.sala.id },
       function () { salioBien = true; })
@@ -1908,6 +1973,32 @@ var Sala = (function () {
   /* ── Jitsi ─────────────────────────────────────────────────────────── */
 
   function alEntrarAJitsi() { render(); }
+
+  /*
+   * ══════════════════════════════════════════════════════════════════════════
+   * 🔴 Volver a la pestaña: repintar el reloj YA, sin esperar el próximo tick.
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * Chromium FRENA las pestañas que no están adelante: al minuto baja los
+   * temporizadores a uno por segundo y, tras unos minutos de fondo, a uno por
+   * MINUTO. El reloj del portal es un `setInterval` de 1 s, así que en una pestaña
+   * de fondo —o en un celular con la pantalla apagada— el número SE CONGELA.
+   *
+   * Lo caro no es que se congele mientras nadie mira: es que al VOLVER puede
+   * quedarse mostrando un número viejo hasta un minuto, y el sondeo también está
+   * frenado, así que la persona vuelve al festejo y ve una pantalla que miente.
+   * El síntoma que reportó el dueño: 'se quedó clavado y después pegó un salto'.
+   *
+   * No se puede desactivar el frenado desde la página. Lo que sí se puede es no
+   * hacerle esperar ni un segundo cuando vuelve.
+   */
+  function alVolverAlFrente() {
+    if (!S.sala) return;
+    if (S.estado && S.estado.ronda && S.estado.ronda.fase === 'countdown') {
+      actualizarReloj(S.estado.ronda);
+    }
+    pollYa();
+  }
 
   function alCambiarRol(esModerador) {
     if (!S.estado || !S.estado.soyAnfitrion) return;
@@ -2049,6 +2140,7 @@ var Sala = (function () {
     soyAnfitrion: function () { return !!(S.estado && S.estado.soyAnfitrion); },
     hayRonda: function () { return hayShow(S.estado); },
     alEntrarAJitsi: alEntrarAJitsi,
+    alVolverAlFrente: alVolverAlFrente,
     alColgar: alColgar,
     alCambiarRol: alCambiarRol,
     alCambiarCamara: alCambiarCamara,
@@ -2722,6 +2814,11 @@ var App = (function () {
      * que ya no está maximizado.
      */
     document.addEventListener('fullscreenchange', Pantalla.alCambiar);
+    /* Ver `Sala.alVolverAlFrente`: el navegador frena las pestañas de fondo y el
+       reloj se queda clavado hasta que alguien lo despierta. */
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) Sala.alVolverAlFrente();
+    });
     Pantalla.ajustarDisponibilidad();
     UI.id('btnRepetirSirena').addEventListener('click', Sala.repetirSirena);
 
