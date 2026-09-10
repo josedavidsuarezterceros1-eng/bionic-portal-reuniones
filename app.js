@@ -137,7 +137,13 @@ var API = (function () {
    * La lista corta es a propósito: cada entrada es una promesa de que repetir es
    * inofensivo. Antes de agregar una, hay que poder escribir el porqué acá.
    */
-  var POST_REPETIBLE = { login: true, pingAsistencia: true, confirmarModerador: true };
+  /*
+   * `abrirSala` es REPETIBLE y tiene que serlo: solo enciende una marca, así que
+   * mandarla dos veces deja la sala abierta las dos veces. Sin esto, el 404 del
+   * transporte —que pega sobre todo al arrancar, justo cuando el anfitrión abre la
+   * sala— le haría creer que no se abrió y toda la filial esperaría de más.
+   */
+  var POST_REPETIBLE = { login: true, pingAsistencia: true, confirmarModerador: true, abrirSala: true };
 
   function post(data) {
     var url = Cfg.url();
@@ -942,7 +948,7 @@ var Sala = (function () {
     timerPoll: null,
     timerTick: null,
     timerAsis: null,
-    camaraOn: false,
+    enReunion: false,   // apretó "Entrar a la reunión" (ver Sala.alEntrarAReunion)
     modAvisado: false,
     enviando: false,
     asisValidada: false, // asistencia ya registrada EN ESTA SALA
@@ -1021,7 +1027,7 @@ var Sala = (function () {
     Pantalla.apagar();
     clearTimeout(S.timerPoll); clearInterval(S.timerTick); clearInterval(S.timerAsis);
     S.timerPoll = S.timerTick = S.timerAsis = null;
-    S.camaraOn = false;
+    S.enReunion = false;
     Jitsi.desmontar();
     cerrarCelebracion();
     S.sala = null; S.estado = null;
@@ -1144,26 +1150,19 @@ var Sala = (function () {
     UI.id('salaTitulo').textContent = r.sala.nombre;
     UI.id('salaManager').textContent = r.sala.manager || '';
 
-    // El video se monta si la sala ya está abierta, o si soy yo el anfitrión que
-    // todavía tiene que abrirla (necesito entrar para que Jitsi me dé moderador).
-    if (r.sala.abierta || r.soyAnfitrion) {
-      pedirEntradaYMontar();
-    } else {
-      // Si el video estaba puesto y esto lo saca, la persona ve desaparecer la
-      // reunión sin haber tocado nada. Queda anotado con el motivo exacto.
-      if (Jitsi.montada()) {
-        UI.rastro('se saca el video: la sala figura cerrada y no soy anfitrión',
-          { salaAbierta: r.sala.abierta, soyAnfitrion: r.soyAnfitrion,
-            anfitrion: r.anfitrion ? r.anfitrion.nombre : null,
-            ausente: r.anfitrion ? !!r.anfitrion.ausente : null });
-      }
-      Jitsi.desmontar();
-    }
-
-    // Red de seguridad de la apertura de sala: ver el comentario de
-    // `confirmarModeradorEnServidor`. Si la confirmación se perdió, esto la
-    // reintenta hasta que el servidor diga que la sala está abierta.
-    if (S.soyModeradorJitsi && r.soyAnfitrion && !r.sala.abierta) confirmarModeradorEnServidor();
+    /*
+     * 🔴 ACÁ YA NO SE MONTA NINGÚN VIDEO (sep 2026).
+     *
+     * Google Meet no se puede incrustar, así que la videollamada vive en otra
+     * pestaña y el portal solo guarda el enlace. Lo que el servidor manda en
+     * `r.sala.meetUrl` es todo lo que hace falta: `renderEspera` pinta el botón de
+     * entrar cuando la sala está abierta.
+     *
+     * Y por eso desapareció de acá el reintento de "confirmar moderador": eso
+     * existía porque el aviso de Jitsi llegaba UNA sola vez y podía perderse. Ahora
+     * la sala la abre el anfitrión con un botón, así que si el clic no llega, lo
+     * ve él en pantalla y vuelve a apretar. No hay nada que reintentar a ciegas.
+     */
 
     /*
      * El estado de la asistencia viaja TAMBIÉN en el sondeo, no solo en la
@@ -1409,61 +1408,114 @@ var Sala = (function () {
     return true;
   }
 
+  /**
+   * El panel de entrada a la reunión. Reemplaza al recuadro del video (sep 2026).
+   *
+   * 🔴 Google Meet NO se puede incrustar, así que acá no hay video: hay un botón
+   * que la abre en otra pestaña. Este panel es ahora la única puerta a la reunión,
+   * y eso es deliberado — pasar por el portal es lo que hace que la asistencia se
+   * cuente y que el festejo llegue.
+   *
+   * ⚠️ El botón se pinta con `pintarSi`, no reescribiendo el HTML en cada sondeo:
+   * el sondeo corre cada 2 s y un botón reemplazado justo entre el apretar y el
+   * soltar se come el clic, sin que se vea nada raro.
+   */
   function renderEspera() {
     var r = S.estado;
-    var hayVideo = Jitsi.montada();
-    UI.mostrar(UI.id('videoEspera'), !hayVideo);
-    if (hayVideo) return;
+    // Ya no hay video que pueda taparlo: este panel está siempre.
+    UI.mostrar(UI.id('videoEspera'), true);
 
     var icono = UI.id('esperaIcono'), titulo = UI.id('esperaTitulo'), txt = UI.id('esperaTexto');
-    var accion = UI.id('esperaAccion');
-    accion.innerHTML = '';
+    var cajaAccion = UI.id('esperaAccion');
+    var url = (r.sala && r.sala.meetUrl) || '';
+    var firma = [r.sala.abierta, !!url, S.enReunion, r.soyAnfitrion].join('|');
 
-    /*
-     * ⚠️ `videoRoto` también entra acá: el permiso llegó bien y aun así el video no
-     * se pudo montar. Sin esta rama, ese caso dejaba la pantalla en "Abriendo la
-     * sala…" para siempre — un cartel que promete algo que ya se sabe que no va a
-     * pasar.
-     *
-     * 🔴 El icono `wifi_off` TIENE que estar en la lista `icon_names` de index.html.
-     * Si falta, acá no sale el dibujo: sale la PALABRA "wifi_off" escrita, en la
-     * única pantalla que la persona mira cuando ya sospecha que algo se rompió.
-     * Estuvo así hasta ago 2026 y ningún check lo vio (el auditor de iconos solo
-     * miraba los escritos al lado del <span>, no los que asigna el JavaScript).
-     */
-    if (!Jitsi.disponible() || S.videoRoto) {
-      icono.textContent = 'wifi_off';
-      titulo.textContent = 'No se pudo cargar el video';
+    /* ── la sala está abierta: se puede entrar ──────────────────────────── */
+    if (r.sala.abierta && url) {
+      icono.textContent = S.enReunion ? 'how_to_reg' : 'videocam';
+      titulo.textContent = S.enReunion ? 'Está en la reunión' : 'La reunión está abierta';
       /*
-       * 🔴 Si el que se quedó sin video es EL ANFITRIÓN, el problema no es suyo: es
-       * de toda la filial. La sala se abre cuando Jitsi le da moderador a él, así
-       * que sin su video NADIE ve la reunión — y los demás solo leen "Abriendo la
-       * sala…", para siempre, sin ninguna pista de qué pasó ni de que hay que
-       * pasarle la sala a otro.
-       *
-       * El aviso de "la videollamada no terminó de abrir" NO cubre esto: se arma al
-       * final de montar el video, y acá el video no llegó a montarse nunca. O sea
-       * que justo en el caso en que hace falta, no salta. Por eso se dice acá.
+       * 🔴 Se le pide explícitamente que NO cierre esta pantalla, y hay que
+       * decirlo: la cuenta regresiva, los botones de producción y el conteo de
+       * asistencia viven acá, no en Meet. Quien cierre el portal creyendo que ya
+       * está adentro de la reunión se queda sin asistencia y sin festejo, y nada
+       * se lo avisa.
        */
-      txt.textContent = r.soyAnfitrion
-        ? 'Usted tiene la sala, pero sin video la reunión no se abre para nadie. ' +
-          'Recargue la página; si sigue igual, libere la sala para que otro pueda abrirla.'
-        : 'Jitsi no respondió. Revise la conexión y recargue la página; el resto del portal sigue funcionando.';
+      txt.textContent = S.enReunion
+        ? 'Deje esta pantalla abierta: acá salen la cuenta regresiva, los botones de producción y su asistencia.'
+        : 'Se abre en otra pestaña. Vuelva a esta pantalla para el festejo de producción.';
+
+      if (pintarSi(cajaAccion, firma,
+        '<button class="btn btn-primario btn-bloque" id="btnEntrarReunion">' +
+          '<span class="material-symbols-rounded">open_in_new</span> ' +
+          (S.enReunion ? 'Volver a la reunión' : 'Entrar a la reunión') + '</button>')) {
+        UI.id('btnEntrarReunion').onclick = entrarAReunion;
+      }
       return;
     }
+
+    cajaAccion.setAttribute('data-firma', firma);
+    cajaAccion.innerHTML = '';
+
+    /* ── abierta pero SIN enlace cargado ───────────────────────────────── */
+    /*
+     * 🔴 Esta rama existe porque sin ella el portal MIENTE.
+     *
+     * Si la sala está abierta y el enlace no está cargado, el código caía en "falta
+     * abrir la sala" — o sea que al anfitrión que acababa de abrirla le seguía
+     * pidiendo abrirla. Apretaría el botón una y otra vez, el panel de al lado le
+     * diría que está abierta, y no habría ninguna pista de que el problema es una
+     * propiedad del proyecto que solo un administrador puede cargar.
+     *
+     * Lo encontró una CAPTURA, con la suite entera en verde. Ver el README.
+     */
+    if (r.sala.abierta) {
+      icono.textContent = 'error';
+      titulo.textContent = 'Falta el enlace de la reunión';
+      txt.textContent = 'La sala está abierta pero no tiene enlace cargado. ' +
+        'Avise a un administrador: se carga una sola vez, en la configuración del portal.';
+      return;
+    }
+
+    /* ── la tengo yo y todavía no la abrí ──────────────────────────────── */
+    if (r.soyAnfitrion) {
+      icono.textContent = 'lock_clock';
+      titulo.textContent = 'Falta abrir la sala';
+      txt.textContent = 'Use el botón «Abrir la sala» del panel para que su filial pueda entrar.';
+      return;
+    }
+
+    /* ── la tiene otro, todavía sin abrir ──────────────────────────────── */
     if (r.anfitrion) {
       icono.textContent = 'hourglass_top';
       titulo.textContent = 'Abriendo la sala…';
       // textContent NO necesita escapado (no interpreta HTML); pasarlo por esc()
       // mostraría "&amp;" literal en un apellido con "&".
       txt.textContent = r.anfitrion.nombre + ' está tomando el control de la reunión.';
-    } else {
-      icono.textContent = 'lock_clock';
-      titulo.textContent = 'Esperando al anfitrión';
-      txt.textContent = r.puedoReclamar
-        ? 'Puede tomar esta sala usted: use el panel de la derecha.'
-        : 'La videollamada se abre cuando un responsable toma la sala.';
+      return;
     }
+
+    /* ── nadie la tomó ─────────────────────────────────────────────────── */
+    icono.textContent = 'lock_clock';
+    titulo.textContent = 'Esperando al anfitrión';
+    txt.textContent = r.puedoReclamar
+      ? 'Puede tomar esta sala usted: use el panel de la derecha.'
+      : 'La reunión se abre cuando un responsable toma la sala.';
+  }
+
+  /**
+   * Abre Google Meet en otra pestaña y arranca el conteo de asistencia.
+   *
+   * ⚠️ El `window.open` va DIRECTO en el manejador del clic. Si se hiciera después
+   * de una respuesta del servidor, el navegador lo trataría como una ventana
+   * emergente y la bloquearía — sin ningún error visible, solo un botón que no
+   * hace nada. Por eso el enlace ya viene en el sondeo y no se pide al apretar.
+   */
+  function entrarAReunion() {
+    var url = S.estado && S.estado.sala && S.estado.sala.meetUrl;
+    if (!url) { UI.toast('Todavía no hay enlace de reunión para esta sala.', 'error'); return; }
+    window.open(url, '_blank', 'noopener');
+    Sala.alEntrarAReunion(true);
   }
 
   function renderAnfitrion() {
@@ -1478,32 +1530,39 @@ var Sala = (function () {
     ].join('|');
 
     if (r.soyAnfitrion) {
+      /*
+       * 🔴 ACÁ VIVE EL BOTÓN QUE ABRE LA SALA, y es la pieza que reemplaza al video
+       * incrustado (sep 2026).
+       *
+       * Antes esto se resolvía solo: el anfitrión entraba a la videollamada, Jitsi
+       * le daba la corona de moderador y el portal avisaba al servidor. Con Google
+       * Meet en otra pestaña **ese aviso no llega nunca**. Sin este botón,
+       * `sala.abierta` se queda en false para siempre y TODA LA FILIAL se queda
+       * mirando "esperando al anfitrión" — sin que nada falle en pantalla. Es la
+       * falla más cara que tuvo el portal y este botón es lo único que la evita.
+       *
+       * ⚠️ Ya no está "Finalizar reunión". Ese botón le mandaba una orden al video
+       * incrustado; con Meet afuera no llega a ninguna parte, así que prometía
+       * cerrar la videollamada de todos y no hacía absolutamente nada. Un botón que
+       * miente es peor que un botón que falta. Para terminar la reunión ahora se
+       * usa el propio Meet, y acá se libera la sala.
+       */
       if (!pintarSi(cont, firma,
         '<div class="aviso ' + (mod ? 'aviso-ok' : 'aviso-info') + '" style="margin-bottom:12px">' +
-          '<span class="material-symbols-rounded">' + (mod ? 'verified' : 'hourglass_top') + '</span>' +
+          '<span class="material-symbols-rounded">' + (mod ? 'verified' : 'lock_clock') + '</span>' +
           '<span>' + (mod
-            ? 'Tiene el control de la sala.'
-            : 'Entre a la videollamada para terminar de abrir la sala.') + '</span>' +
+            ? 'La sala está abierta. Su filial ya puede entrar.'
+            : 'Tomó la sala. Falta abrirla para que los demás puedan entrar.') + '</span>' +
         '</div>' +
         (mod ? '' :
+          '<button class="btn btn-primario btn-bloque" id="btnAbrirSala" style="margin-bottom:8px">' +
+            '<span class="material-symbols-rounded">login</span> Abrir la sala</button>' +
           '<p style="font-size:12.5px;color:var(--txt-dim);margin-bottom:12px">' +
-          'Si tarda en abrir, recargue la página.</p>') +
+            'Hasta que la abra, los demás no ven el enlace de la reunión.</p>') +
         '<button class="btn btn-bloque" id="btnLiberar">' +
-          '<span class="material-symbols-rounded">logout</span> Liberar la sala</button>' +
-        /*
-         * Terminar para todos solo aparece con la sala YA ABIERTA: sin reunión
-         * montada no hay nada que terminar, y el botón sería una promesa que no se
-         * cumple. Va en rojo y SEGUNDO: liberar la sala es lo de todos los días,
-         * esto es lo que no tiene vuelta atrás.
-         */
-        (mod
-          ? '<button class="btn btn-peligro btn-bloque" id="btnTerminar" style="margin-top:8px">' +
-              '<span class="material-symbols-rounded">call_end</span> Finalizar reunión</button>' +
-            '<p style="font-size:12px;color:var(--txt-dim);margin-top:8px">' +
-              'Cierra la videollamada para todos los participantes.</p>'
-          : ''))) return;
+          '<span class="material-symbols-rounded">logout</span> Liberar la sala</button>')) return;
+      if (UI.id('btnAbrirSala')) UI.id('btnAbrirSala').onclick = abrirSala;
       UI.id('btnLiberar').onclick = liberar;
-      if (UI.id('btnTerminar')) UI.id('btnTerminar').onclick = terminarReunion;
       return;
     }
 
@@ -1766,10 +1825,10 @@ var Sala = (function () {
 
     var faltan = S.asisFaltan;   // minutos, ya calculados por el servidor
 
-    if (S.camaraOn) {
+    if (S.enReunion) {
       cont.innerHTML = '<div class="aviso aviso-info">' +
-        '<span class="material-symbols-rounded">videocam</span>' +
-        '<span>Cámara encendida. ' +
+        '<span class="material-symbols-rounded">how_to_reg</span>' +
+        '<span>En la reunión. ' +
         (faltan != null
           ? (faltan <= 1 ? 'Falta menos de un minuto.' : 'Faltan ' + faltan + ' min.')
           : 'Contando…') +
@@ -1778,7 +1837,7 @@ var Sala = (function () {
     }
 
     /*
-     * 🔴 Con la cámara apagada A MITAD de la cuenta NO se dice "manténgala N
+     * 🔴 Si salió de la reunión A MITAD de la cuenta NO se dice "quédese N
      * minutos": el servidor conserva lo que ya lleva, así que ese texto le pediría
      * empezar de nuevo algo que no se perdió — y quien crea que perdió el progreso
      * es probable que ni lo intente.
@@ -1786,14 +1845,14 @@ var Sala = (function () {
     if (faltan != null && faltan > 0 && faltan < mins) {
       cont.innerHTML = '<div class="aviso aviso-info">' +
         '<span class="material-symbols-rounded">hourglass_top</span>' +
-        '<span>Se pausó: lo que lleva no se pierde. Vuelva a encender la cámara — ' +
+        '<span>Se pausó: lo que lleva no se pierde. Vuelva a la reunión — ' +
         (faltan <= 1 ? 'falta menos de un minuto' : 'faltan ' + faltan + ' min') +
         '.</span></div>';
       return;
     }
 
     cont.innerHTML = '<p style="font-size:13px;color:var(--txt-dim)">' +
-      'Encienda la cámara y manténgala ' + cuanto +
+      'Entre a la reunión y deje esta pantalla abierta ' + cuanto +
       ' para que quede registrada su asistencia.</p>';
   }
 
@@ -1896,6 +1955,21 @@ var Sala = (function () {
     S.autoTomaResuelta = true;
     accion({ accion: 'liberarAnfitrion', token: Sesion.token, salaId: S.sala.id },
       function () { UI.toast('Reunión terminada.', 'ok'); });
+  }
+
+  /**
+   * Abre la sala para toda la filial. Solo el anfitrión.
+   *
+   * 🔴 Es lo que antes hacía solo el video incrustado al darle la corona al
+   * anfitrión. Ver el comentario largo en `renderAnfitrion`.
+   *
+   * ⚠️ Va por `accion()`, que ya frena el doble clic y refresca el sondeo. Es
+   * idempotente en el servidor: apretarlo dos veces deja la sala abierta las dos
+   * veces, así que un reintento no puede romper nada.
+   */
+  function abrirSala() {
+    accion({ accion: 'abrirSala', token: Sesion.token, salaId: S.sala.id },
+      function () { UI.toast('Sala abierta para todos.', 'ok'); });
   }
 
   function liberar() {
@@ -2060,11 +2134,23 @@ var Sala = (function () {
     UI.toast('La videollamada no terminó de abrir. Pruebe recargando la página.', 'error');
   }
 
-  function alCambiarCamara(encendida) {
-    S.camaraOn = !!encendida;
+  /**
+   * "Entré a la reunión" / "salí de la reunión".
+   *
+   * 🔴 REEMPLAZA a `alCambiarCamara` (sep 2026). Antes esto lo disparaba el video
+   * incrustado al avisar que la cámara se prendía o apagaba. Con Google Meet en
+   * otra pestaña **el portal no puede ver la cámara de nadie**, así que ahora lo
+   * dispara la persona al apretar "Entrar a la reunión".
+   *
+   * ⚠️ Es un auto-reporte más débil que el anterior y no se disimula: quien deja
+   * el portal abierto y se va sigue sumando latidos. Lo corrige la lista de
+   * verificación, donde el responsable confirma a su gente.
+   */
+  function alEntrarAReunion(entro) {
+    S.enReunion = !!entro;
     clearInterval(S.timerAsis);
     S.timerAsis = null;
-    if (S.camaraOn && !S.asisValidada) {
+    if (S.enReunion && !S.asisValidada) {
       latirAsistencia();
       S.timerAsis = setInterval(latirAsistencia, Cfg.ASIS_PING_MS);
     }
@@ -2083,7 +2169,18 @@ var Sala = (function () {
   function latirAsistencia() {
     if (!S.sala || latiendo) return;
     latiendo = true;
-    API.post({ accion: 'pingAsistencia', token: Sesion.token, salaId: S.sala.id, camaraActiva: S.camaraOn })
+    /*
+     * ⚠️ Se manda `enReunion` Y `camaraActiva` con el mismo valor, a propósito.
+     *
+     * El backend y el frontend se publican por separado. Si el FRONTEND llegara
+     * primero y mandara solo el nombre nuevo, el backend viejo leería undefined →
+     * "no está presente" → **nadie quedaría registrado en toda la reunión**, sin un
+     * solo error en pantalla. El backend nuevo acepta los dos nombres; esto cubre
+     * el orden de despliegue contrario. Se saca en el paso de limpieza, cuando
+     * ambos lados lleven un despliegue de convivencia.
+     */
+    API.post({ accion: 'pingAsistencia', token: Sesion.token, salaId: S.sala.id,
+               enReunion: S.enReunion, camaraActiva: S.enReunion })
       .then(function (r) {
         if (!r || !r.ok) return;
         S.asisFaltan = (r.faltanMin != null) ? r.faltanMin : r.faltan;
@@ -2143,7 +2240,7 @@ var Sala = (function () {
     alVolverAlFrente: alVolverAlFrente,
     alColgar: alColgar,
     alCambiarRol: alCambiarRol,
-    alCambiarCamara: alCambiarCamara,
+    alEntrarAReunion: alEntrarAReunion,
     avisarModeradorDemorado: avisarModeradorDemorado,
     cerrarCelebracion: cerrarCelebracion,
     repetirSirena: repetirSirena

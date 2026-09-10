@@ -16,7 +16,7 @@
   adentro: 5.347.060 bytes medidos en ago 2026. Con la lista baja a entre 11 KB
   y 54 KB según el subconjunto que negocie el navegador — en producción se
   midieron 11.228 bytes. O sea que esto era el ~98 % del peso de la página: TODO
-  el resto junto (app.js?v=b8ec68ae, styles.css?v=99b94bd3, las dos fuentes de texto y el confeti) son
+  el resto junto (app.js?v=3cf74c50, styles.css?v=99b94bd3, las dos fuentes de texto y el confeti) son
   unos 210 KB.
 
   Y no se ve como "la página pesa": se ve como que los BOTONES TARDAN. Los
@@ -38,7 +38,7 @@
   navegador dibujaría la ligadura con la fuente de respaldo y se vería el nombre
   del icono escrito hasta que llegue la buena.
 -->
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=arrow_back,arrow_forward,call_end,campaign,celebration,check_circle,emoji_events,error,event_busy,fact_check,fullscreen,fullscreen_exit,grid_view,groups,hourglass_top,how_to_reg,info,lock_clock,login,logout,manage_accounts,network_check,refresh,running_with_errors,save,savings,settings,shield_person,sync,verified,videocam,visibility,visibility_off,volume_up,wifi_off,workspace_premium&display=block" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=arrow_back,arrow_forward,campaign,celebration,check_circle,emoji_events,error,event_busy,fact_check,fullscreen,fullscreen_exit,grid_view,groups,hourglass_top,how_to_reg,info,lock_clock,login,logout,manage_accounts,network_check,open_in_new,refresh,running_with_errors,save,savings,settings,shield_person,sync,verified,videocam,visibility,visibility_off,volume_up,workspace_premium&display=block" rel="stylesheet">
 
 <link rel="stylesheet" href="styles.css?v=99b94bd3">
 
@@ -53,7 +53,7 @@
 <!-- El External API se sirve desde JaaS, NO desde meet.jit.si: el de allá corta
      las llamadas incrustadas a los 5 minutos (probado en ago 2026). -->
 <script defer src="https://8x8.vc/external_api.js"></script>
-<script defer src="app.js?v=b8ec68ae"></script>
+<script defer src="app.js?v=3cf74c50"></script>
 </head>
 <body>
 
@@ -169,12 +169,18 @@
       <div class="sala-layout">
         <div>
           <div class="video-marco">
-            <div id="jitsiCont" style="width:100%;height:100%"></div>
             <!--
-              Pantalla completa PROPIA, no la de Jitsi.
-              La de Jitsi maximiza solo el iframe y deja afuera todo lo del portal: los
-              botones de producción, la cuenta regresiva y el festejo. Esta agranda el
-              contenedor entero, así que lo del portal queda encima del video.
+              🔴 Acá VIVÍA el video incrustado. Desde sep 2026 la videollamada es
+              Google Meet, que NO se puede incrustar (lo prohíbe con cabeceras, no
+              hay parámetro que lo cambie): la reunión se abre en otra pestaña y
+              este marco queda para el panel de entrada y el festejo.
+
+              ⚠️ No volver a poner un iframe acá "probando si ahora sí": el síntoma
+              es un recuadro en blanco sin ningún error en la consola.
+            -->
+            <!--
+              Pantalla completa PROPIA. Ahora vale MÁS que antes: esta es la pantalla
+              que se proyecta en la reunión, con la cuenta regresiva y el festejo.
             -->
             <button class="btn-pantalla" id="btnPantalla" type="button"
                     title="Pantalla completa" aria-label="Pantalla completa">
@@ -193,7 +199,7 @@
             <div class="video-espera" id="videoEspera">
               <span class="material-symbols-rounded" id="esperaIcono">lock_clock</span>
               <h3 id="esperaTitulo">Esperando al anfitrión</h3>
-              <p id="esperaTexto">La videollamada se abre cuando un responsable toma la sala.</p>
+              <p id="esperaTexto">La reunión se abre cuando un responsable toma la sala.</p>
               <div id="esperaAccion"></div>
             </div>
           </div>
@@ -239,7 +245,7 @@
          Sin pestaña en la barra: se llega solo poniendo #config en la dirección.
 
          🔴 No es un secreto, es que NO ES UNA PANTALLA DEL EQUIPO. La dirección del
-         backend ya viene puesta en app.js?v=b8ec68ae, así que nadie del equipo necesita tocar
+         backend ya viene puesta en app.js?v=3cf74c50, así que nadie del equipo necesita tocar
          nada acá; y un director no tiene por qué ver las tripas de cómo está
          programado el CRM. Cuando la empresa tenga directores que no programan,
          esta pantalla sería ruido que invita a romper algo.
