@@ -131,7 +131,7 @@ h1, h2, h3, h4, .display { font-family: var(--font-display); font-weight: 600; l
 .campo { display: flex; flex-direction: column; gap: 6px; }
 .campo label { font-size: 12.5px; font-weight: 600; color: var(--txt-dim); letter-spacing: 0.01em; }
 
-input[type="text"], input[type="password"], input[type="email"], input[type="url"], select {
+input[type="text"], input[type="password"], input[type="email"], input[type="url"], input[type="date"], select {
   width: 100%;
   padding: 12px 14px;
   border: 1px solid var(--borde);
@@ -935,3 +935,19 @@ tbody tr:hover { background: var(--surface); }
   filter: drop-shadow(0 3px 7px rgba(0, 0, 0, 0.6));
   animation: rebote 1.1s ease-in-out infinite;
 }
+
+/* ── Lista de verificación de asistencia (sep 2026) ──────────────────────────
+   La barra se APILA en el teléfono: con la fecha y el turno al costado del título,
+   a 390 px los dos controles se salían de la pantalla y no se podía cambiar de turno.
+── */
+.verif-barra {
+  display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.verif-barra > div:first-child { flex: 1; min-width: 200px; }
+.verif-filtros { display: flex; gap: 8px; flex-wrap: wrap; }
+.verif-filtros input, .verif-filtros select { min-height: 40px; }
+/* El pedido del motivo ocupa la celda entera y se apila en pantalla angosta: es un
+   campo de texto y dos botones, y en el teléfono en una línea no entran. */
+.verif-motivo { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.verif-texto { min-width: 170px; max-width: 100%; }

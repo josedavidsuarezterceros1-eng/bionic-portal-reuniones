@@ -2625,7 +2625,177 @@ var Dashboard = (function () {
    Asistencia
    ══════════════════════════════════════════════════════════════════════════ */
 var Asistencia = (function () {
+  /*
+   * ── La lista de verificación ───────────────────────────────────────────────
+   *
+   * 🔴 Todo lo que decide algo lo decide el SERVIDOR: a quién se puede tildar
+   * (`personas`), si el turno sigue abierto (`puedeEditar`) y qué vale hoy para cada
+   * uno (`estado`). Acá no se recalcula ninguna de las tres. Si el navegador
+   * dedujera, por ejemplo, el plazo por su reloj, la pantalla mostraría los botones
+   * habilitados y el servidor los rechazaría uno por uno, sin que se entienda por qué.
+   *
+   * ⚠️ El motivo para marcar ausente se pide EN LA FILA, no con `prompt()`: la
+   * reunión se proyecta y una ventana del navegador queda encima de todo, además de
+   * que algunos navegadores la bloquean y el clic no haría nada.
+   */
+  var V = { fecha: '', turno: '', personas: [], puedeEditar: false, pidiendo: '' };
+
+  function estadoChip(p) {
+    if (p.estado === 'PRESENTE') {
+      return '<span class="chip chip-verde">Presente</span>' +
+        (p.revisado ? '' : ' <span class="chip">sin revisar</span>');
+    }
+    return '<span class="chip chip-rojo">Ausente</span>' +
+      (p.revisado ? '' : ' <span class="chip">sin revisar</span>');
+  }
+
+  function origen(p) {
+    if (p.revisado) {
+      return 'Lo marcó ' + UI.esc(p.por) + (p.cuando ? ' · ' + UI.hora(p.cuando) : '') +
+        (p.motivo ? '<br><span style="color:var(--txt-dim)">Motivo: ' + UI.esc(p.motivo) + '</span>' : '');
+    }
+    // Sin revisar: se dice qué vio el portal, que es de dónde sale el valor de hoy.
+    return p.automatico === 'VALIDADO'
+      ? 'El portal lo registró' + (p.ingreso ? ' ' + UI.hora(p.ingreso) : '')
+      : '<span style="color:var(--txt-dim)">El portal no lo registró</span>';
+  }
+
+  function pintarVerif(r) {
+    var caja = UI.id('verifCaja');
+    /*
+     * `data-listo` marca que la respuesta LLEGÓ, se muestre o no la caja.
+     *
+     * ⚠️ No es decoración: sin esa marca, un check que mire si la caja está escondida
+     * la encuentra escondida ANTES de que el servidor conteste y pasa siempre, diga lo
+     * que diga el código. Le pasó al check del asesor, y se vio recién al romperlo a
+     * propósito: el modo "mostrar la caja aunque no haya gente" seguía en verde.
+     */
+    caja.setAttribute('data-listo', '1');
+    // Sin gente a cargo no hay nada que verificar: la caja no existe para esa persona.
+    if (!r || !r.ok || !r.personas || !r.personas.length) { UI.mostrar(caja, false); return; }
+    UI.mostrar(caja, true);
+
+    V.fecha = r.fecha; V.turno = r.turno; V.personas = r.personas; V.puedeEditar = !!r.puedeEditar;
+    UI.id('verifFecha').value = r.fecha;
+    UI.id('verifTurno').value = r.turno;
+
+    var faltan = r.personas.filter(function (p) { return !p.revisado; }).length;
+    UI.id('verifSubtitulo').innerHTML = r.personas.length + ' en su equipo · ' +
+      (faltan ? '<b>' + faltan + ' sin revisar</b>' : 'todos revisados');
+
+    UI.id('verifAviso').innerHTML = r.puedeEditar ? '' :
+      '<div class="aviso aviso-info"><span class="material-symbols-rounded">lock_clock</span>' +
+      '<span>' + UI.esc(r.motivoCerrado) + '</span></div>';
+
+    UI.id('verifTabla').innerHTML =
+      '<div class="tabla-scroll"><table><thead><tr>' +
+        '<th>Nombre</th><th>Cargo</th><th>Asistencia</th><th>De dónde sale</th><th></th>' +
+      '</tr></thead><tbody>' +
+      r.personas.map(function (p) {
+        var pidiendo = V.pidiendo === p.email;
+        return '<tr data-email="' + UI.esc(p.email) + '">' +
+          '<td style="font-weight:600">' + UI.esc(p.nombre) + '</td>' +
+          '<td style="color:var(--txt-dim);font-size:12.5px">' + UI.esc(p.cargo) + '</td>' +
+          '<td>' + estadoChip(p) + '</td>' +
+          '<td style="font-size:12.5px">' + origen(p) + '</td>' +
+          '<td style="text-align:right;white-space:nowrap">' +
+            (!V.puedeEditar ? '' : pidiendo
+              ? '<span class="verif-motivo">' +
+                  '<input type="text" class="verif-texto" data-motivo="' + UI.esc(p.email) + '" ' +
+                    'placeholder="¿Por qué faltó?" maxlength="120">' +
+                  '<button class="btn btn-peligro" data-guardar="' + UI.esc(p.email) + '">Guardar</button>' +
+                  '<button class="btn" data-cancelar="1">Cancelar</button>' +
+                '</span>'
+              : '<button class="btn" data-presente="' + UI.esc(p.email) + '" title="Estuvo en la reunión">' +
+                  '<span class="material-symbols-rounded">check_circle</span> Presente</button> ' +
+                '<button class="btn" data-ausente="' + UI.esc(p.email) + '" title="No estuvo">' +
+                  '<span class="material-symbols-rounded">cancel</span> Ausente</button>') +
+          '</td>' +
+        '</tr>';
+      }).join('') +
+      '</tbody></table></div>';
+
+    if (V.pidiendo) {
+      var caja2 = UI.$('[data-motivo="' + V.pidiendo + '"]');
+      if (caja2) caja2.focus();
+    }
+  }
+
+  /*
+   * 🔴 Al ABRIR no se manda ni fecha ni turno: los elige el SERVIDOR, que es el único
+   * que sabe qué reunión corre (y con qué reloj). La primera versión mandaba lo que
+   * tenía el desplegable —MAÑANA, su primera opción— así que a las 14:00 la lista
+   * abría en la reunión de la mañana, ya cerrada: los botones no aparecían y parecía
+   * que el jefe no tenía permiso. Lo encontró el test del navegador, no el
+   * razonamiento: el backend respondía perfecto a lo que se le preguntaba.
+   */
+  function cargarVerif(desdeControles) {
+    var fecha = desdeControles ? (UI.id('verifFecha').value || '') : '';
+    var turno = desdeControles ? (UI.id('verifTurno').value || '') : '';
+    API.get({ accion: 'verificacion', token: Sesion.token, fecha: fecha, turno: turno })
+      .then(pintarVerif)
+      /*
+       * 🔴 El fallo NO se traga. Antes este `catch` estaba vacío "porque el historial
+       * de abajo ya avisa", y eso dejaba al jefe mirando una pantalla sin lista sin
+       * saber si es que no tiene gente a cargo o si no se pudo cargar — dos cosas muy
+       * distintas cuando lo que hay que hacer es revisar la asistencia de su equipo.
+       */
+      .catch(function (e) {
+        var caja = UI.id('verifCaja');
+        caja.setAttribute('data-listo', 'error');
+        UI.mostrar(caja, true);
+        UI.id('verifSubtitulo').textContent = '';
+        UI.id('verifTabla').innerHTML = '';
+        UI.id('verifAviso').innerHTML =
+          '<div class="aviso aviso-error"><span class="material-symbols-rounded">error</span>' +
+          '<span>No se pudo cargar la lista de su equipo. ' + UI.esc(e && e.message || '') + '</span></div>';
+      });
+  }
+
+  function marcar(email, presente, motivo) {
+    // 🔴 Escribe: NO se reintenta sola (ver POST_REPETIBLE). Un reintento agregaría
+    // otra fila con la misma corrección: no cambia el resultado, pero ensucia el
+    // registro de quién la hizo y cuándo.
+    return API.post({
+      accion: 'verificarAsistencia', token: Sesion.token,
+      email: email, presente: presente, motivo: motivo || '',
+      fecha: V.fecha, turno: V.turno
+    }).then(function (r) {
+      if (!r || !r.ok) { UI.toast((r && r.message) || 'No se pudo guardar.', 'error'); return; }
+      V.pidiendo = '';
+      pintarVerif(r);
+      UI.toast(presente ? 'Marcado presente.' : 'Marcado ausente.', 'ok');
+    }).catch(function (e) { UI.toast(e.message || 'Error de conexión.', 'error'); });
+  }
+
+  function alClic(ev) {
+    var b = ev.target.closest && ev.target.closest('button');
+    if (!b) return;
+    if (b.getAttribute('data-presente')) { marcar(b.getAttribute('data-presente'), true); return; }
+    if (b.getAttribute('data-ausente')) {
+      V.pidiendo = b.getAttribute('data-ausente');
+      pintarVerif({ ok: true, fecha: V.fecha, turno: V.turno, puedeEditar: V.puedeEditar,
+                    motivoCerrado: '', personas: V.personas });
+      return;
+    }
+    if (b.getAttribute('data-cancelar')) {
+      V.pidiendo = '';
+      pintarVerif({ ok: true, fecha: V.fecha, turno: V.turno, puedeEditar: V.puedeEditar,
+                    motivoCerrado: '', personas: V.personas });
+      return;
+    }
+    var email = b.getAttribute('data-guardar');
+    if (email) {
+      var caja = UI.$('[data-motivo="' + email + '"]');
+      var texto = caja ? caja.value.trim() : '';
+      // El servidor lo exige igual; acá se avisa sin gastar un viaje.
+      if (texto.length < 4) { UI.toast('Escriba el motivo para marcar ausente.', 'error'); return; }
+      marcar(email, false, texto);
+    }
+  }
+
   function cargar() {
+    cargarVerif();
     var cont = UI.id('asistenciaTabla');
     cont.innerHTML = '<div class="vacio"><span class="material-symbols-rounded">hourglass_top</span>Cargando…</div>';
     API.get({ accion: 'asistencia', token: Sesion.token, limite: 300 })
@@ -2679,7 +2849,7 @@ var Asistencia = (function () {
       '</tbody></table></div>';
   }
 
-  return { cargar: cargar };
+  return { cargar: cargar, alClic: alClic, cargarVerif: cargarVerif };
 })();
 
 
@@ -2920,6 +3090,12 @@ var App = (function () {
     UI.id('btnRepetirSirena').addEventListener('click', Sala.repetirSirena);
 
     UI.id('linkConfig').addEventListener('click', function (ev) { ev.preventDefault(); abrirConfig(); });
+    // Delegado sobre la tabla: se repinta entera en cada marcado, así que los botones
+    // de cada fila no existen todavía cuando esto corre.
+    UI.id('verifTabla').addEventListener('click', Asistencia.alClic);
+    // `true`: acá sí manda lo que eligió la persona, que es de lo que se trata.
+    UI.id('verifFecha').addEventListener('change', function () { Asistencia.cargarVerif(true); });
+    UI.id('verifTurno').addEventListener('change', function () { Asistencia.cargarVerif(true); });
 
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (t) {
       t.addEventListener('click', function () { irA(t.getAttribute('data-vista')); });
