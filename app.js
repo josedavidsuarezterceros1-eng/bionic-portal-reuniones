@@ -4,7 +4,7 @@
  * ══════════════════════════════════════════════════════════════════════════
  *
  * Un solo archivo, pero por módulos separados (Cfg · API · Reloj · Sesion ·
- * Audio · Confeti · UI · Jitsi · Sala · Dashboard · Asistencia · Config · App).
+ * Audio · Confeti · UI · Sala · Dashboard · Asistencia · Config · App).
  *
  * Por qué NO son módulos ES separados: el requisito es que index.html funcione
  * abriéndolo directo con doble clic, y desde file:// el navegador bloquea los
@@ -56,7 +56,6 @@ var Cfg = (function () {
     POLL_SALA_MS: 3500,      // cualquier otro momento dentro de una sala
     ASIS_PING_MS: 60000,     // un latido por minuto con la cámara encendida
     COUNTDOWN_MS: 30000,     // tiene que coincidir con el backend (solo para el anillo)
-    MOD_AVISO_MS: 18000,     // sin ser moderador después de esto, se explica cómo
 
     url: function () {
       try { return localStorage.getItem(LLAVE_API) || this.URL_POR_DEFECTO; }
@@ -96,8 +95,8 @@ var API = (function () {
    * primera lectura 200, segunda 302 y después 404).
    *
    * Si el navegador pide esa URL dos veces —reintento silencioso de conexión, la
-   * carrera QUIC/TCP de Chrome la primera vez que habla con ese host, la pestaña
-   * ocupada montando Jitsi— la segunda llega con la clave gastada y sale un 404.
+   * carrera QUIC/TCP de Chrome la primera vez que habla con ese host, una pestaña
+   * ocupada— la segunda llega con la clave gastada y sale un 404.
    * No es un fallo del portal ni del despliegue: es cómo funciona Apps Script, y
    * pasa MÁS AL PRINCIPIO, que es cuando la conexión todavía se está armando.
    *
@@ -122,12 +121,6 @@ var API = (function () {
    *   · pingAsistencia   — `pingAsistencia_` descarta los latidos separados por
    *                        menos de 51 s (ASIS_PING_MS * 0.85), así que el
    *                        reintento es un no-op por construcción del backend.
-   *   · confirmarModerador — pone un booleano en su valor final (idempotente). Lo
-   *                        único que repite es una fila del registro de anfitrión,
-   *                        que el propio backend documenta como "registro, no
-   *                        estado". Ese costo es NADA al lado de lo que evita: si
-   *                        esta llamada se pierde, la sala NO SE ABRE PARA NADIE y
-   *                        toda la filial queda esperando al moderador.
    *
    * ⚠️ `registrarProduccion` NO está y no puede estar: un reintento anotaría la
    * matrícula DOS VECES en pleno festejo, y nadie lo notaría hasta cuadrar los
@@ -143,7 +136,7 @@ var API = (function () {
    * transporte —que pega sobre todo al arrancar, justo cuando el anfitrión abre la
    * sala— le haría creer que no se abrió y toda la filial esperaría de más.
    */
-  var POST_REPETIBLE = { login: true, pingAsistencia: true, confirmarModerador: true, abrirSala: true };
+  var POST_REPETIBLE = { login: true, pingAsistencia: true, abrirSala: true };
 
   function post(data) {
     var url = Cfg.url();
@@ -510,11 +503,83 @@ var Audio_ = (function () {
     aplausos(c, t0 + 0.1, dur, 0.25);
   }
 
+  /*
+   * Un aviso CORTO, para cuando arranca una ronda.
+   *
+   * 🔴 Existe por Google Meet: la reunión vive en OTRA PESTAÑA, así que cuando el
+   * anfitrión pide producción nadie está mirando el portal. Sin un aviso que se
+   * oiga, el asesor se entera del countdown cuando ya está por la mitad — o no se
+   * entera y pierde su propia venta, sin que en pantalla falle nada.
+   *
+   * ⚠️ Es deliberadamente distinto del festejo: dos notas secas de medio segundo,
+   * no la sirena. Si sonara parecido, la sala no distinguiría "empezó la ronda" de
+   * "destaparon a alguien" y el suspenso se arruina.
+   *
+   * ⚠️ Suena TAMBIÉN en los countdowns de teatro, y tiene que ser así: el teatro es
+   * indistinguible del real a propósito. Un aviso que solo sonara en los reales le
+   * contaría a toda la sala cuándo queda producción.
+   */
+  function sonidoAviso() {
+    var c = contexto(); if (!c) return;
+    var t0 = c.currentTime;
+    [[880, 0], [1320, 0.18]].forEach(function (par) {
+      var osc = c.createOscillator();
+      var gain = c.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(par[0], t0 + par[1]);
+      gain.gain.setValueAtTime(0, t0 + par[1]);
+      gain.gain.linearRampToValueAtTime(0.16, t0 + par[1] + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, t0 + par[1] + 0.3);
+      osc.connect(gain); gain.connect(c.destination);
+      osc.start(t0 + par[1]); osc.stop(t0 + par[1] + 0.32);
+    });
+  }
+
   return {
     desbloquear: desbloquear,
+    aviso: function () { try { sonidoAviso(); } catch (e) {} },
     tocar: function (tipo) {
       try { tipo === 'matricula' ? sonidoMatricula() : sonidoAbono(); } catch (e) {}
     }
+  };
+})();
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Tema — claro por defecto, oscuro si lo eligió esta persona
+   ══════════════════════════════════════════════════════════════════════════
+
+   🔴 El tema ya viene puesto ANTES de que este archivo corra: lo hace un script
+   chiquito en el <head> de index.html. Acá solo está el interruptor.
+
+   Si esto lo hiciera app.js, que se carga con `defer`, la página se dibujaría con
+   el claro y un instante después cambiaría entera — un parpadeo en cada carga, y
+   proyectado en la reunión se ve roto.
+
+   ⚠️ NO se consulta `prefers-color-scheme`: el dueño pidió que arranque en claro,
+   punto. Mirar la preferencia del sistema dejaría a media oficina en oscuro sin
+   haberlo elegido, y encima con la pantalla de reunión distinta para cada uno.
+   ══════════════════════════════════════════════════════════════════════════ */
+var Tema = (function () {
+  var LLAVE = 'portal_tema';
+
+  function actual() {
+    return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  }
+
+  function poner(t) {
+    if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+    else document.documentElement.removeAttribute('data-theme');
+    /*
+     * ⚠️ Guardar puede LANZAR (ventana privada, almacenamiento bloqueado). El tema
+     * ya cambió en pantalla; que no se pueda recordar no puede tirar el clic.
+     */
+    try { localStorage.setItem(LLAVE, t); } catch (e) {}
+  }
+
+  return {
+    actual: actual,
+    alternar: function () { poner(actual() === 'dark' ? 'light' : 'dark'); }
   };
 })();
 
@@ -570,10 +635,10 @@ var UI = (function () {
    * persona está mirando el video, no la esquina; el registro del navegador queda.
    *
    * Va con prefijo fijo para que se pueda filtrar escribiendo `[portal]` en la
-   * consola, entre las cientos de líneas que escupe Jitsi.
+   * consola, entre lo que escriban las librerías de terceros.
    *
-   * Se anota SOLO lo que decide algo —entrar, salir, montar o desmontar el video,
-   * quién es anfitrión— y nunca datos de personas ni el permiso de entrada.
+   * Se anota SOLO lo que decide algo —entrar a una sala, salir, quién es
+   * anfitrión— y nunca datos de personas ni el enlace de la reunión.
    */
   function rastro(que, detalle) {
     try {
@@ -655,293 +720,11 @@ var UI = (function () {
 
 
 /* ══════════════════════════════════════════════════════════════════════════
-   Jitsi — la videollamada, y la detección REAL de moderador
-   ══════════════════════════════════════════════════════════════════════════ */
-var Jitsi = (function () {
-  // ¿Llegó a ENTRAR a la llamada, o se quedó en la pantalla previa? Es lo que
-  // distingue "se cortó la reunión" de "canceló antes de entrar".
-  var entroAlaLlamada = false;
-  var api = null;
-  var miId = null;
-  var salaMontada = null;
-  var avisoModTimer = null;
-
-  function disponible() { return typeof window.JitsiMeetExternalAPI === 'function'; }
-
-  /*
-   * 🔴 La sala se monta con un PERMISO firmado por el servidor, no sola.
-   *
-   * Con JaaS, quien entra tiene que traer un permiso (un JWT) que el backend firma
-   * con la clave privada de la empresa. Eso trae dos cosas que con meet.jit.si eran
-   * imposibles: el moderador lo decide el PORTAL —según el gate de cargo contra la
-   * hoja Ejecutivos— y el permiso vale para UNA sala, no para todas.
-   *
-   * Por eso `montar` recibe `entrada`, que es lo que devolvió `videoEntrada` del
-   * backend: el dominio, el nombre completo de la sala (con el App ID adelante) y
-   * el permiso firmado.
-   */
-  function montar(entrada, usuario) {
-    if (salaMontada === entrada.sala && api) return true;
-    desmontar();
-
-    var cont = UI.id('jitsiCont');
-    if (!cont || !disponible()) return false;
-
-    var opciones = {
-      roomName: entrada.sala,
-      jwt: entrada.jwt,
-      width: '100%',
-      height: '100%',
-      parentNode: cont,
-      configOverwrite: {
-        /*
-         * 🔴 NO va `startWithAudioMuted`, y sacarlo fue una decisión, no un olvido.
-         *
-         * Estaba en true para que una filial entera no entrara con los micrófonos
-         * abiertos. El efecto secundario era peor que el problema: la pantalla previa
-         * de Jitsi TIENE un interruptor de micrófono, la persona lo prendía, apretaba
-         * "Entrar"… y el portal se lo apagaba igual. O sea que ese interruptor MENTÍA,
-         * y quien no encontraba después el botón de la barra se quedaba mudo toda la
-         * reunión creyendo que había hecho lo correcto. Reportado por el dueño en
-         * ago 2026, y la decisión de respetar la elección es suya.
-         *
-         * Lo que reemplaza al forzado: el anfitrión tiene la moderación de audio en el
-         * panel de Participantes. Silenciar a quien molesta es un clic; adivinar por
-         * qué no te escuchan es media reunión.
-         *
-         * ⚠️ El de VIDEO se queda: entrar con la cámara apagada ahorra datos y, sobre
-         * todo, la asistencia se cuenta por cámara encendida — prenderla tiene que ser
-         * un acto deliberado, no algo que pasa solo al entrar.
-         */
-        startWithVideoMuted: true,
-        prejoinPageEnabled: true,
-        disableDeepLinking: true,
-        enableWelcomePage: false,
-        // Jitsi trae su propia interfaz y por defecto la sirve en inglés: el cartel
-        // de 'no moderators have yet arrived' aparecía así en pleno arranque de la
-        // reunión. Es la pantalla que más gente va a leer del portal sin que la
-        // hayamos escrito nosotros, así que va en el idioma de la casa.
-        defaultLanguage: 'es',
-        /*
-         * ════════════════════════════════════════════════════════════════════
-         * 🔴 ESTO ES UNA LISTA BLANCA: lo que no esté acá DESAPARECE de la barra.
-         * ════════════════════════════════════════════════════════════════════
-         *
-         * Es la lista COMPLETA de Jitsi (config.js del proyecto, 32 botones) menos
-         * DOS. Se escribe entera a propósito, aunque sea larga: la primera versión
-         * listó solo los 13 que se me ocurrieron y **borró 18 funciones sin que
-         * nadie lo pidiera** — entre ellas compartir video por enlace, que el dueño
-         * usaba, y el cambio de cámara del teléfono. Nadie ve un error: las
-         * funciones simplemente ya no están, y hay que acordarse de que existían.
-         *
-         * Los que se sacan, y por qué. Cada uno tiene que poder justificarse acá:
-         *
-         *   · `fullscreen` — la pantalla completa de Jitsi maximiza SOLO su iframe y
-         *     deja afuera los botones de producción, la cuenta regresiva y el
-         *     festejo: quien la usara perdería justo lo que vino a mirar. El portal
-         *     pone la suya, que agranda el contenedor entero.
-         *   · `feedback` — encuesta de 8x8, ajena a la empresa. Pedido del dueño.
-         *   · `download` — ofrece bajarse la app de Jitsi, y ahí NO EXISTEN el
-         *     festejo ni la asistencia: es un botón que saca a la gente de la propia
-         *     herramienta. Decisión del dueño (ago 2026).
-         *
-         * 🔴 Y estos tres, porque EL PERMISO QUE FIRMAMOS YA LOS DESHABILITA. Ver
-         * `features` en `jaasToken_` (gas-backend.gs): `recording`, `livestreaming` y
-         * `transcription` van en false. Dejarlos en la barra es prometer algo que al
-         * apretarlo no pasa — y en una reunión eso se lee como que el portal falla:
-         *
-         *   · `recording`      — grabar          (features.recording: false)
-         *   · `livestreaming`  — transmitir      (features.livestreaming: false)
-         *   · `closedcaptions` — subtítulos      (features.transcription: false)
-         *
-         * ⚠️ Si algún día se habilita alguna de esas tres en el permiso, hay que
-         * devolver su botón acá: si no, la función queda pagada y escondida.
-         *
-         * ⚠️ Si Jitsi agrega un botón nuevo, NO va a aparecer hasta que se sume acá.
-         * Es el precio de poder esconder esos dos: no existe una lista negra.
-         *
-         * ⚠️ `toggle-camera` cambia entre la cámara de adelante y la de atrás y SOLO
-         * sale en el teléfono: en la computadora no se nota si falta, y en el celular
-         * ata a la persona a la cámara que le tocó.
-         *
-         * ⚠️ Nada de nombres inventados: `filmstrip` estuvo en la primera versión y
-         * NO existe en el catálogo de Jitsi — se ignoraba en silencio, dando la
-         * falsa impresión de que esa función estaba contemplada.
-         */
-        toolbarButtons: [
-          'camera', 'chat', 'desktop', 'embedmeeting', 'etherpad',
-          'hangup', 'help', 'highlight', 'invite', 'linktosalesforce',
-          'microphone', 'noisesuppression', 'participants-pane', 'profile',
-          'raisehand', 'security', 'select-background', 'settings',
-          'shareaudio', 'sharedvideo', 'shortcuts', 'stats', 'tileview',
-          'toggle-camera', 'videoquality', 'whiteboard'
-        ]
-      },
-      interfaceConfigOverwrite: {
-        SHOW_JITSI_WATERMARK: false,
-        DEFAULT_REMOTE_DISPLAY_NAME: 'Participante Bionic Mind',
-        LANG_DETECTION: false
-      },
-      userInfo: {
-        // El cargo va en el nombre, decisión del dueño: en la reunión se ve de
-        // quién es cada recuadro sin tener que preguntarlo.
-        displayName: usuario.nombre + (usuario.cargo ? ' (' + String(usuario.cargo).toUpperCase() + ')' : '')
-      }
-    };
-
-    /*
-     * ⚠️ Devuelve si la sala quedó montada DE VERDAD, y el llamador lo mira.
-     *
-     * Mientras esto no devolvía nada, un fallo del constructor se veía igual que
-     * un montaje exitoso desde afuera: el portal volvía a pedir el permiso de
-     * entrada en cada sondeo, para siempre. Ver `pedirEntradaYMontar`.
-     */
-    try { api = new window.JitsiMeetExternalAPI(entrada.dominio, opciones); }
-    catch (e) { api = null; UI.rastro('Jitsi no se pudo montar', e && e.message); return false; }
-
-    salaMontada = entrada.sala;
-
-    /*
-     * 🔴 NO SE TOCA EL `allow` DEL IFRAME. Acá había un `setAttribute` que lo
-     * REEMPLAZABA por una lista de cinco permisos, y eso solo restaba.
-     *
-     * Jitsi ya le pone NUEVE al crear el iframe (se verificó contra su
-     * `external_api.js` real, no de memoria):
-     *
-     *   autoplay · camera · clipboard-write · compute-pressure · display-capture
-     *   hid · microphone · screen-wake-lock · speaker-selection
-     *
-     * Los cinco que poníamos estaban TODOS ahí dentro, así que la línea no agregaba
-     * nada y le quitaba cuatro:
-     *
-     *   · screen-wake-lock  — 🔴 lo que evita que la PANTALLA SE APAGUE en plena
-     *     reunión. Sin él, el equipo se duerme como si nadie lo estuviera usando.
-     *   · speaker-selection — elegir por qué parlante sale el audio.
-     *   · hid               — auriculares USB con botones de silenciar/colgar.
-     *   · compute-pressure  — deja a Jitsi bajar la calidad cuando el equipo sufre.
-     *
-     * Ninguna de las cuatro da error al faltar: simplemente esa función deja de
-     * andar. `speaker-selection` era el aviso "Unrecognized feature" de la consola,
-     * que parecía ruido de Jitsi y era nuestro.
-     *
-     * ⚠️ Si alguna vez hace falta un permiso más, se AGREGA al que ya está puesto —
-     * nunca se reemplaza la lista entera.
-     */
-
-    api.addEventListener('videoConferenceJoined', function (ev) {
-      miId = ev && ev.id;
-      entroAlaLlamada = true;
-      UI.rastro('entró a la videollamada');
-      Sala.alEntrarAJitsi();
-    });
-
-    /*
-     * 🔴 Acá se decide si la sala se abre para todos.
-     *
-     * Se espera el HECHO, no la intención.
-     *
-     * Con JaaS el permiso de entrada ya viene firmado diciendo quién es moderador,
-     * así que este evento llega solo y al instante — el anfitrión ya no tiene que
-     * iniciar sesión en ningún lado. Aun así el portal NO destapa el video porque
-     * alguien apretó el botón: si por lo que fuera el permiso no llegara a valer
-     * (clave vencida, sala mal armada), los demás caerían en "esperando al
-     * moderador" sin ningún error a la vista y sin saber a quién reclamarle.
-     */
-    api.addEventListener('participantRoleChanged', function (ev) {
-      if (!ev || ev.id !== miId) return;
-      UI.rastro('Jitsi le dio el rol', ev.role);
-      Sala.alCambiarRol(ev.role === 'moderator');
-    });
-
-    // Cámara encendida/apagada → es lo que alimenta el registro de asistencia.
-    api.addEventListener('videoMuteStatusChanged', function (ev) {
-      Sala.alCambiarCamara(!(ev && ev.muted));
-    });
-
-    api.addEventListener('videoConferenceLeft', function () {
-      UI.rastro('salió de la videollamada (videoConferenceLeft)');
-      Sala.alCambiarCamara(false);
-    });
-
-    /*
-     * 🔴 Colgar tiene que devolver al listado de filiales, no dejar una pantalla en
-     * blanco.
-     *
-     * Jitsi avisa con `readyToClose` que ya terminó y que lo saquemos de la página.
-     * Mientras nadie escuchaba ese aviso, el iframe se quedaba mostrando SU pantalla
-     * de despedida —la blanca— y el portal seguía como si la reunión continuara:
-     * sondeando la sala, con la pestaña "Reunión" activa y sin ninguna salida a la
-     * vista salvo tocar "Volver".
-     *
-     * ⚠️ Se sale por `setTimeout` a propósito: acá adentro seguimos dentro del
-     * despacho del evento de Jitsi, y lo primero que hace la salida es `dispose()`
-     * sobre esta misma instancia. Destruir el objeto mientras corre uno de sus
-     * handlers es pedirle que reviente en la única pantalla donde el usuario ya no
-     * puede hacer nada.
-     *
-     * Cubre las tres formas de terminar: colgar, cancelar en la pantalla previa, y
-     * que el anfitrión termine la reunión para todos.
-     */
-    api.addEventListener('readyToClose', function () {
-      // 🔴 El dato que faltaba para explicar una expulsión: si NUNCA llegó a entrar
-      // a la llamada, esto vino de la pantalla previa (canceló o tocó colgar ahí),
-      // no de una reunión cortada. Son dos causas muy distintas.
-      UI.rastro('Jitsi pide cerrar (readyToClose) · ¿había entrado a la llamada?',
-        entroAlaLlamada);
-      setTimeout(function () { Sala.alColgar(); }, 0);
-    });
-
-    // Si en un rato largo no llegó el rol de moderador, el permiso firmado no fue
-    // aceptado. Se avisa en vez de dejar la sala trabada en silencio.
-    clearTimeout(avisoModTimer);
-    avisoModTimer = setTimeout(function () { Sala.avisarModeradorDemorado(); }, Cfg.MOD_AVISO_MS);
-    return true;
-  }
-
-  function desmontar() {
-    if (api) UI.rastro('se desmonta el video');
-    entroAlaLlamada = false;
-    clearTimeout(avisoModTimer);
-    if (api) { try { api.dispose(); } catch (e) {} }
-    api = null; miId = null; salaMontada = null;
-    var cont = UI.id('jitsiCont');
-    if (cont) cont.innerHTML = '';
-  }
-
-  /**
-   * Termina la videollamada PARA TODOS. Solo la acepta Jitsi si quien la manda
-   * tiene la corona, y el permiso de la corona lo firma el servidor.
-   *
-   * ⚠️ Jitsi IGNORA EN SILENCIO un comando que no conoce: si esta orden no llegara
-   * a existir en la versión servida, acá no pasa nada y no hay error que ver. Por
-   * eso el llamador libera la sala igual — pase lo que pase con el comando, el
-   * portal queda coherente: la reunión figura terminada y la sala, libre.
-   */
-  function terminarParaTodos() {
-    if (!api) return false;
-    try { api.executeCommand('endConference'); return true; } catch (e) { return false; }
-  }
-
-  /** Cuántos hay en la llamada, para poder decirlo en la confirmación. */
-  function cuantos() {
-    if (!api) return 0;
-    try { return api.getNumberOfParticipants() || 0; } catch (e) { return 0; }
-  }
-
-  return {
-    montar: montar, desmontar: desmontar, disponible: disponible,
-    montada: function () { return !!api; },
-    terminarParaTodos: terminarParaTodos, cuantos: cuantos
-  };
-})();
-
-
-/* ══════════════════════════════════════════════════════════════════════════
    Sala — el corazón: polling, countdown y festejo
    ══════════════════════════════════════════════════════════════════════════ */
 var Sala = (function () {
   var S = {
-    sala: null,          // {id, nombre, roomCode, ...}
+    sala: null,          // {id, nombre, ...}
     estado: null,        // última respuesta de estadoSala
     registreEn: null,    // rondaId donde YO anoté (memoria local de esta pestaña)
     ultimoDestape: null, // rondaId:revelados ya festejado, para no repetirlo en cada poll
@@ -949,14 +732,12 @@ var Sala = (function () {
     timerTick: null,
     timerAsis: null,
     enReunion: false,   // apretó "Entrar a la reunión" (ver Sala.alEntrarAReunion)
-    modAvisado: false,
     enviando: false,
     asisValidada: false, // asistencia ya registrada EN ESTA SALA
     redCaida: false,     // para no repetir el aviso de conexión en cada sondeo
     asisFaltan: null,
     asisIngreso: null,   // a qué hora quedó registrado (lo dice el servidor)
     asisTarde: false,    // …y si esa hora llegó tarde a la reunión
-    videoRoto: false,    // no se pudo montar el video: no se pide más el permiso
     ultimoItem: null,    // para el botón de repetir sirena
     ceroPedido: null     // finTs para el que ya se pidió la consulta del segundo cero
   };
@@ -972,15 +753,6 @@ var Sala = (function () {
     UI.id('salaManager').textContent = '';
     S.registreEn = null;
     S.ultimoDestape = null;
-    S.modAvisado = false;
-    // ⚠️ Igual que `asisValidada`: el rol de moderador es POR SALA. Sin este reset,
-    // quien pasa de una sala a otra arrastra el "Jitsi ya me dio moderador" de la
-    // anterior y el sondeo empieza a reintentar la apertura de una sala en la que
-    // todavía no entró — un POST cada 3,5 s que nadie pidió.
-    S.soyModeradorJitsi = false;
-    S.modConfirmado = false;
-    S.modRechazado = false;
-    S.modEnviando = false;
     // ⚠️ La asistencia se cuenta POR SALA. Sin este reset, quien pasa de una sala
     // a otra arrastra el "ya validada" de la anterior y su asistencia a la segunda
     // reunión no se registra nunca — sin ningún error a la vista.
@@ -990,34 +762,10 @@ var Sala = (function () {
     S.asisTarde = false;
     S.redCaida = false;
     S.ceroPedido = null;
-    // ⚠️ Se limpia POR SALA, como todo lo demás: que el video no haya podido
-    // montarse en una sala no puede dejar sin video a la siguiente. Y si el
-    // problema era la librería sin cargar, la próxima vez vuelve a marcarse sola.
-    S.videoRoto = false;
     // "Ya se decidió algo sobre esta sala en esta visita". Ver `autoTomarSala`.
     S.autoTomaResuelta = false;
     poll();
     S.timerTick = setInterval(tick, 1000);
-  }
-
-  /*
-   * Colgó (o lo colgaron). Se vuelve al listado de filiales.
-   *
-   * El guard de `S.sala` no es de más: `readyToClose` también llega cuando la salida
-   * ya la disparó otra cosa —"Volver", cerrar sesión, entrar a otra sala—, y sin él
-   * un aviso tardío tiraría al usuario al dashboard cuando ya está en otro lado.
-   */
-  function alColgar() {
-    if (!S.sala) { UI.rastro('aviso de colgado TARDÍO: se ignora (ya no hay sala)'); return; }
-    UI.rastro('el portal devuelve al listado porque la videollamada terminó');
-    /*
-     * 8 segundos, no los 3,8 de siempre: este cartel EXPLICA por qué la pantalla
-     * cambió sola. Al dueño lo sacó de una sala, vio un cartel y no llegó a
-     * leerlo — y sin eso no se pudo saber si lo había sacado el portal o la
-     * videollamada. Un aviso que se va antes de que lo lean no avisó nada.
-     */
-    UI.toast('Se cerró la videollamada, así que volvió al listado de filiales.', 'info', 8000);
-    App.irA('dashboard');   // irA se encarga de llamar a salir()
   }
 
   function salir() {
@@ -1025,10 +773,12 @@ var Sala = (function () {
     // salida —colgar, cerrar sesión, la sesión vencida, cambiar de sala— y cualquiera
     // de ellos deja la pantalla completa puesta sobre una vista escondida.
     Pantalla.apagar();
+    // ⚠️ Y el título vuelve a lo que era: si no, quien sale en mitad de una ronda
+    // se queda con la pestaña gritando "¡PRODUCCIÓN!" para siempre.
+    tituloSegunRonda(false);
     clearTimeout(S.timerPoll); clearInterval(S.timerTick); clearInterval(S.timerAsis);
     S.timerPoll = S.timerTick = S.timerAsis = null;
     S.enReunion = false;
-    Jitsi.desmontar();
     cerrarCelebracion();
     S.sala = null; S.estado = null;
   }
@@ -1107,6 +857,23 @@ var Sala = (function () {
 
   /** ¿Hay algo que mirar en el panel ahora mismo? Cuenta regresiva o destape.
    *  Lo usan la cadencia del sondeo y la apertura automática del panel. */
+  /*
+   * El título de la pestaña grita mientras hay ronda.
+   *
+   * 🔴 Es lo ÚNICO del portal que se ve desde la pestaña de Meet. Con la reunión
+   * afuera, el panel más lindo del mundo no sirve si está en una pestaña de fondo.
+   *
+   * ⚠️ Se guarda el título original en vez de escribirlo a mano: si mañana cambia
+   * el <title>, esto lo sigue solo en vez de restaurar un texto que ya no es.
+   */
+  var TITULO_BASE = document.title;
+
+  function tituloSegunRonda(hay) {
+    try {
+      document.title = hay ? '🔴 ¡PRODUCCIÓN! · ' + TITULO_BASE : TITULO_BASE;
+    } catch (e) { /* un título que no se puede escribir no puede tirar el sondeo */ }
+  }
+
   function hayShow(est) {
     var f = est && est.ronda && est.ronda.fase;
     return f === 'countdown' || f === 'reveal';
@@ -1201,70 +968,29 @@ var Sala = (function () {
     // pantalla limpia, le falta el botón de pedir producción.
     if (!eraAnfitrion && r.soyAnfitrion) Pantalla.alAscenderAAnfitrion();
 
+    /*
+     * ══════════════════════════════════════════════════════════════════════
+     * 🔴 QUE LA RONDA LLEGUE A QUIEN ESTÁ MIRANDO MEET, NO EL PORTAL.
+     * ══════════════════════════════════════════════════════════════════════
+     *
+     * Este es el agujero que abrió Google Meet: la reunión vive en OTRA PESTAÑA,
+     * así que cuando el anfitrión pide producción **nadie está mirando el portal**.
+     * El panel se abre solo, sí — pero en una pestaña que está de fondo, y lo único
+     * que llega hasta la pestaña de al lado son el TÍTULO y el SONIDO.
+     *
+     * Sin esto, el asesor se entera del countdown cuando ya está por la mitad, o no
+     * se entera y pierde su propia venta sin que en pantalla falle nada.
+     *
+     * ⚠️ Va por TRANSICIÓN, como la apertura del panel: por estado sonaría en cada
+     * sondeo, o sea cada 2 segundos durante toda la ronda.
+     */
     if (showAntes !== hayShow(r)) {
-      if (hayShow(r)) Pantalla.abrirPorRonda(); else Pantalla.cerrarPorRonda();
+      if (hayShow(r)) { Pantalla.abrirPorRonda(); Audio_.aviso(); } else Pantalla.cerrarPorRonda();
+      tituloSegunRonda(hayShow(r));
     }
 
     detectarDestape(r.ronda);
     render();
-  }
-
-  /*
-   * Pide el permiso de entrada al servidor y monta la videollamada.
-   *
-   * ⚠️ Se pide UNA sola vez por sala, no en cada sondeo: el permiso se firma con
-   * la clave privada de la empresa y pedirlo cada 2 segundos sería hacer trabajar
-   * al servidor —y a la firma RSA— para nada. Si la sala ya está montada, `montar`
-   * corta solo.
-   *
-   * Si el permiso no se puede firmar (falta una propiedad en el script, la clave
-   * está en un formato que no acepta), el mensaje del servidor se muestra tal cual.
-   * Sin eso el síntoma sería una pantalla negra sin explicación.
-   */
-  var pidiendoEntrada = false;
-
-  /*
-   * 🔴 EL FRENO DE VERDAD, y no alcanzaba con `Jitsi.montada()`.
-   *
-   * `montada()` es "existe el objeto de Jitsi". Si la librería de Jitsi no cargó
-   * —la CDN bloqueada por el firewall de la oficina, la red caída— ese objeto NO
-   * SE CREA NUNCA, así que `montada()` se queda en false para siempre y el freno
-   * no frena nada: el portal vuelve a pedir el permiso de entrada en CADA sondeo.
-   *
-   * Medido con una sonda: 5 sondeos = 5 permisos en 20 segundos. Y cada permiso es
-   * una firma RSA en el servidor. En reposo son ~17 por minuto y por persona;
-   * durante una ronda el sondeo baja a 2 s, o sea ~30 por minuto — contra un Apps
-   * Script que admite 30 ejecuciones simultáneas para TODA la filial. El portal se
-   * ahoga solo justo en el festejo, y en pantalla solo dice que no cargó el video,
-   * así que cada uno culpa a su propio internet.
-   *
-   * `videoRoto` marca "ya intenté y no se puede": corta los pedidos hasta que se
-   * cambie de sala (`entrar` lo limpia). Un fallo del PEDIDO no lo enciende, a
-   * propósito: ese sí conviene reintentarlo, es el 404 pasajero del transporte.
-   */
-  function pedirEntradaYMontar() {
-    if (Jitsi.montada() || pidiendoEntrada || !S.sala) return;
-    if (S.videoRoto) return;
-    // Sin la librería no hay nada que montar: pedir el permiso es trabajo del
-    // servidor tirado a la basura, y encima repetido cada 2 segundos.
-    if (!Jitsi.disponible()) { S.videoRoto = true; render(); return; }
-
-    pidiendoEntrada = true;
-    API.get({ accion: 'videoEntrada', token: Sesion.token, salaId: S.sala.id })
-      .then(function (r) {
-        if (!S.sala) return;
-        if (!r || !r.ok) { UI.toast((r && r.message) || 'No se pudo abrir la videollamada.', 'error'); return; }
-        if (!Jitsi.montar(r, Sesion.usuario)) {
-          // El permiso llegó bien y aun así no se pudo montar. Se deja de pedir y
-          // se dice qué pasó: si no, la pantalla queda en "Abriendo la sala…" para
-          // siempre mientras el servidor firma permisos que nadie usa.
-          S.videoRoto = true;
-          UI.rastro('el permiso llegó pero el video no se pudo montar: se deja de pedir');
-        }
-        render();
-      })
-      .catch(function (e) { if (S.sala) UI.toast(e.message || 'No se pudo abrir la videollamada.', 'error'); })
-      .then(function () { pidiendoEntrada = false; });
   }
 
   /**
@@ -1444,6 +1170,11 @@ var Sala = (function () {
       txt.textContent = S.enReunion
         ? 'Deje esta pantalla abierta: acá salen la cuenta regresiva, los botones de producción y su asistencia.'
         : 'Se abre en otra pestaña. Vuelva a esta pantalla para el festejo de producción.';
+      /*
+       * ⚠️ El botón queda aunque ya se haya entrado, y dice "Volver a la reunión":
+       * quien cierre la pestaña de Meet por error necesita poder volver sin salir
+       * de la sala y entrar de nuevo.
+       */
 
       if (pintarSi(cajaAccion, firma,
         '<button class="btn btn-primario btn-bloque" id="btnEntrarReunion">' +
@@ -1454,8 +1185,19 @@ var Sala = (function () {
       return;
     }
 
-    cajaAccion.setAttribute('data-firma', firma);
-    cajaAccion.innerHTML = '';
+    /*
+     * 🔴 El vaciado de la caja de acción va POR RAMA, no acá arriba.
+     *
+     * Mientras estuvo suelto antes de las ramas, dejaba la firma ya escrita: la
+     * rama de RESCATE llamaba después a `pintarSi` con esa misma firma, `pintarSi`
+     * la veía igual y devolvía false — así que el botón «Abrir la sala» NO SE
+     * PINTABA NUNCA. Sin ningún error: un anfitrión con la sala trabada y sin
+     * ninguna forma de destrabarla.
+     */
+    var sinAccion = function () {
+      cajaAccion.setAttribute('data-firma', firma);
+      cajaAccion.innerHTML = '';
+    };
 
     /* ── abierta pero SIN enlace cargado ───────────────────────────────── */
     /*
@@ -1470,23 +1212,48 @@ var Sala = (function () {
      * Lo encontró una CAPTURA, con la suite entera en verde. Ver el README.
      */
     if (r.sala.abierta) {
+      sinAccion();
       icono.textContent = 'error';
       titulo.textContent = 'Falta el enlace de la reunión';
-      txt.textContent = 'La sala está abierta pero no tiene enlace cargado. ' +
-        'Avise a un administrador: se carga una sola vez, en la configuración del portal.';
+      /*
+       * ⚠️ El texto decía "se carga una sola vez, en la configuración del portal",
+       * que era cierto con el enlace a mano. Desde Google Meet lo pone la
+       * sincronización del calendario, así que una organización recién fundada no
+       * tiene enlace hasta la corrida de la madrugada — y el cartel mandaba al
+       * administrador a buscar una propiedad que no tiene nada que ver.
+       */
+      txt.textContent = 'La sala está abierta pero todavía no tiene reunión creada. ' +
+        'Avise a un administrador: se crea sola con la sincronización del calendario, ' +
+        'y se puede adelantar ejecutando «sincronizarCalendario».';
       return;
     }
 
-    /* ── la tengo yo y todavía no la abrí ──────────────────────────────── */
+    /* ── la tengo yo y quedó sin abrir: RESCATE ────────────────────────── */
+    /*
+     * 🔴 Desde sep 2026 esta rama casi no se ve: tomar la sala la abre en el mismo
+     * gesto. Se llega acá solo si ese POST se perdió en el transporte de un solo
+     * uso de Apps Script, o si el registro quedó de un despliegue anterior.
+     *
+     * Y por eso el botón vive ACÁ y no en el panel: es un rescate, no un paso del
+     * flujo. Sin él, un 404 pasajero deja al anfitrión con la sala tomada y cerrada
+     * y sin ninguna forma de destrabarla salvo liberarla y volver a entrar.
+     */
     if (r.soyAnfitrion) {
       icono.textContent = 'lock_clock';
-      titulo.textContent = 'Falta abrir la sala';
-      txt.textContent = 'Use el botón «Abrir la sala» del panel para que su filial pueda entrar.';
+      titulo.textContent = 'La sala quedó sin abrir';
+      txt.textContent = 'Pasa cuando se corta la conexión justo al entrar. ' +
+        'Ábrala para que su filial pueda entrar.';
+      if (pintarSi(cajaAccion, firma,
+        '<button class="btn btn-primario btn-bloque" id="btnAbrirSala">' +
+          '<span class="material-symbols-rounded">login</span> Abrir la sala</button>')) {
+        UI.id('btnAbrirSala').onclick = abrirSala;
+      }
       return;
     }
 
     /* ── la tiene otro, todavía sin abrir ──────────────────────────────── */
     if (r.anfitrion) {
+      sinAccion();
       icono.textContent = 'hourglass_top';
       titulo.textContent = 'Abriendo la sala…';
       // textContent NO necesita escapado (no interpreta HTML); pasarlo por esc()
@@ -1496,6 +1263,7 @@ var Sala = (function () {
     }
 
     /* ── nadie la tomó ─────────────────────────────────────────────────── */
+    sinAccion();
     icono.textContent = 'lock_clock';
     titulo.textContent = 'Esperando al anfitrión';
     txt.textContent = r.puedoReclamar
@@ -1531,37 +1299,32 @@ var Sala = (function () {
 
     if (r.soyAnfitrion) {
       /*
-       * 🔴 ACÁ VIVE EL BOTÓN QUE ABRE LA SALA, y es la pieza que reemplaza al video
-       * incrustado (sep 2026).
+       * 🔴 YA NO HAY BOTÓN «Abrir la sala» acá (sep 2026, decisión del dueño).
        *
-       * Antes esto se resolvía solo: el anfitrión entraba a la videollamada, Jitsi
-       * le daba la corona de moderador y el portal avisaba al servidor. Con Google
-       * Meet en otra pestaña **ese aviso no llega nunca**. Sin este botón,
-       * `sala.abierta` se queda en false para siempre y TODA LA FILIAL se queda
-       * mirando "esperando al anfitrión" — sin que nada falle en pantalla. Es la
-       * falla más cara que tuvo el portal y este botón es lo único que la evita.
+       * Ese botón nació para reemplazar el aviso del video incrustado, que con Meet
+       * en otra pestaña no llega nunca. Pero era un paso de trámite con la filial
+       * mirando: no hay nada sobre la reunión de Meet que el anfitrión pueda
+       * afirmar y el portal comprobar. Ahora la sala se abre en el mismo gesto de
+       * tomarla (ver `reclamarAnfitrion_` en el backend).
        *
-       * ⚠️ Ya no está "Finalizar reunión". Ese botón le mandaba una orden al video
-       * incrustado; con Meet afuera no llega a ninguna parte, así que prometía
-       * cerrar la videollamada de todos y no hacía absolutamente nada. Un botón que
-       * miente es peor que un botón que falta. Para terminar la reunión ahora se
-       * usa el propio Meet, y acá se libera la sala.
+       * ⚠️ El botón sobrevive SOLO como rescate, y en la otra pantalla: si el POST
+       * del reclamo se perdió en el transporte de un solo uso, `renderEspera` lo
+       * ofrece. Acá arriba sería un paso de más en el 99 % de las veces.
+       *
+       * ⚠️ Tampoco está "Finalizar reunión": con Meet afuera esa orden no llega a
+       * ninguna parte, así que prometía cerrarle la videollamada a todos y no hacía
+       * nada. Un botón que miente es peor que un botón que falta. La reunión se
+       * termina desde el propio Meet; acá se libera la sala.
        */
       if (!pintarSi(cont, firma,
         '<div class="aviso ' + (mod ? 'aviso-ok' : 'aviso-info') + '" style="margin-bottom:12px">' +
           '<span class="material-symbols-rounded">' + (mod ? 'verified' : 'lock_clock') + '</span>' +
           '<span>' + (mod
-            ? 'La sala está abierta. Su filial ya puede entrar.'
-            : 'Tomó la sala. Falta abrirla para que los demás puedan entrar.') + '</span>' +
+            ? 'Usted conduce esta reunión. Su filial ya puede entrar.'
+            : 'Tomó la sala, pero todavía figura cerrada. Use «Abrir la sala» del panel de la izquierda.') + '</span>' +
         '</div>' +
-        (mod ? '' :
-          '<button class="btn btn-primario btn-bloque" id="btnAbrirSala" style="margin-bottom:8px">' +
-            '<span class="material-symbols-rounded">login</span> Abrir la sala</button>' +
-          '<p style="font-size:12.5px;color:var(--txt-dim);margin-bottom:12px">' +
-            'Hasta que la abra, los demás no ven el enlace de la reunión.</p>') +
-        '<button class="btn btn-bloque" id="btnLiberar">' +
+        '<button class="btn btn-fantasma btn-bloque" id="btnLiberar">' +
           '<span class="material-symbols-rounded">logout</span> Liberar la sala</button>')) return;
-      if (UI.id('btnAbrirSala')) UI.id('btnAbrirSala').onclick = abrirSala;
       UI.id('btnLiberar').onclick = liberar;
       return;
     }
@@ -1820,6 +1583,13 @@ var Sala = (function () {
      * Mientras no haya llegado el estado se dice "unos minutos" en vez de arriesgar
      * un número que después cambie en pantalla.
      */
+    /*
+     * ⚠️ Los minutos los dice el SERVIDOR. Antes esto hablaba de "cámara"; con
+     * Google Meet en otra pestaña el portal NO PUEDE VER LA CÁMARA DE NADIE, así
+     * que decía una cosa y medía otra. Ahora se dice lo que de verdad se mide:
+     * estar en la sala. Lo que la cámara no prueba lo corrige el jefe en la
+     * pestaña Asistencia, con su observación al lado.
+     */
     var mins = S.estado.asistencia && S.estado.asistencia.minutos;
     var cuanto = mins ? (mins === 1 ? 'un minuto' : mins + ' minutos') : 'unos minutos';
 
@@ -1845,14 +1615,14 @@ var Sala = (function () {
     if (faltan != null && faltan > 0 && faltan < mins) {
       cont.innerHTML = '<div class="aviso aviso-info">' +
         '<span class="material-symbols-rounded">hourglass_top</span>' +
-        '<span>Se pausó: lo que lleva no se pierde. Vuelva a la reunión — ' +
+        '<span>Se pausó: lo que lleva no se pierde. Vuelva a esta pantalla — ' +
         (faltan <= 1 ? 'falta menos de un minuto' : 'faltan ' + faltan + ' min') +
         '.</span></div>';
       return;
     }
 
     cont.innerHTML = '<p style="font-size:13px;color:var(--txt-dim)">' +
-      'Entre a la reunión y deje esta pantalla abierta ' + cuanto +
+      'Deje esta pantalla abierta ' + cuanto +
       ' para que quede registrada su asistencia.</p>';
   }
 
@@ -1929,32 +1699,6 @@ var Sala = (function () {
 
     accion({ accion: 'reclamarAnfitrion', token: Sesion.token, salaId: S.sala.id },
       function () { UI.toast('Abriendo la sala…', 'info'); });
-  }
-
-  /*
-   * Terminar la reunión para todos. No tiene vuelta atrás y se ejecuta sobre gente
-   * que está trabajando, así que pide confirmación con el número de participantes
-   * adelante — "¿terminar la reunión?" a secas no dice a cuántos afecta.
-   */
-  function terminarReunion() {
-    var n = Jitsi.cuantos();
-    if (!window.confirm('Se va a cerrar la videollamada' +
-        (n > 1 ? ' para las ' + n + ' personas que están adentro' : '') + '.\n\n' +
-        'Esto no se puede deshacer. ¿Terminar la reunión?')) return;
-
-    /*
-     * 🔴 Se libera la sala PASE LO QUE PASE con el comando.
-     *
-     * Jitsi ignora en silencio una orden que no conoce, así que "terminó" no se
-     * puede dar por cierto. Liberando igual, el portal queda coherente en los dos
-     * casos: la sala vuelve a estar disponible y nadie queda conduciendo una
-     * reunión que ya no existe. Si el comando SÍ funcionó, a cada uno le llega el
-     * aviso de Jitsi y el portal lo devuelve al listado (ver `readyToClose`).
-     */
-    Jitsi.terminarParaTodos();
-    S.autoTomaResuelta = true;
-    accion({ accion: 'liberarAnfitrion', token: Sesion.token, salaId: S.sala.id },
-      function () { UI.toast('Reunión terminada.', 'ok'); });
   }
 
   /**
@@ -2044,10 +1788,6 @@ var Sala = (function () {
     ).then(function () { if (boton) boton.disabled = false; });
   }
 
-  /* ── Jitsi ─────────────────────────────────────────────────────────── */
-
-  function alEntrarAJitsi() { render(); }
-
   /*
    * ══════════════════════════════════════════════════════════════════════════
    * 🔴 Volver a la pestaña: repintar el reloj YA, sin esperar el próximo tick.
@@ -2072,66 +1812,6 @@ var Sala = (function () {
       actualizarReloj(S.estado.ronda);
     }
     pollYa();
-  }
-
-  function alCambiarRol(esModerador) {
-    if (!S.estado || !S.estado.soyAnfitrion) return;
-    if (!esModerador) return;
-    S.modAvisado = true;
-    S.soyModeradorJitsi = true;
-    confirmarModeradorEnServidor();
-  }
-
-  /*
-   * ══════════════════════════════════════════════════════════════════════════
-   * 🔴 Si esta confirmación se pierde, LA SALA NO SE ABRE PARA NADIE.
-   * ══════════════════════════════════════════════════════════════════════════
-   *
-   * `abierta` es exactamente `moderadorOk` del anfitrión (ver `estadoSala_`), y
-   * eso solo lo pone esta llamada. Jitsi dispara `participantRoleChanged` UNA vez,
-   * así que si el POST se perdía no había nada que lo volviera a intentar: toda la
-   * filial se quedaba en "esperando al moderador" y el anfitrión no veía ningún
-   * error — el `.catch` estaba VACÍO. Con el 404 del transporte de Apps Script
-   * pasando justo en el momento de entrar a la videollamada, esto no era teórico.
-   *
-   * Ahora se cura solo: mientras Jitsi me dé moderador, yo sea el anfitrión y el
-   * servidor siga diciendo que la sala está cerrada, cada sondeo lo reintenta.
-   * Repetirlo es inofensivo (pone un booleano en su valor final).
-   *
-   * Los tres frenos son distintos a propósito:
-   *   · confirmado → listo, no se toca más.
-   *   · rechazado  → el servidor dijo que no (no soy el anfitrión). Reintentarlo
-   *                  cada 2 s no lo va a convencer, y llenaría la pantalla.
-   *   · enviando   → una sola en vuelo, como el sondeo.
-   *
-   * El fallo de TRANSPORTE no avisa acá: el sondeo que corre en paralelo ya pinta
-   * "Error de conexión" una vez, y el próximo intento sale solo en 2-3,5 s. Avisar
-   * también acá sería el segundo cartel rojo por el mismo problema.
-   */
-  function confirmarModeradorEnServidor() {
-    if (!S.sala || S.modEnviando || S.modConfirmado || S.modRechazado) return;
-    S.modEnviando = true;
-    API.post({ accion: 'confirmarModerador', token: Sesion.token, salaId: S.sala.id, esModerador: true })
-      .then(function (r) {
-        if (!S.sala) return;
-        if (r && r.ok) {
-          S.modConfirmado = true;
-          UI.toast('Sala abierta para todos.', 'ok');
-          pollYa();
-          return;
-        }
-        S.modRechazado = true;
-        UI.toast((r && r.message) || 'El servidor no aceptó abrir la sala.', 'error');
-      })
-      .catch(function () { /* transporte: lo reintenta el próximo sondeo */ })
-      .then(function () { S.modEnviando = false; });
-  }
-
-  function avisarModeradorDemorado() {
-    if (S.modAvisado || !S.estado || !S.estado.soyAnfitrion) return;
-    if (S.estado.anfitrion && S.estado.anfitrion.moderadorOk) return;
-    S.modAvisado = true;
-    UI.toast('La videollamada no terminó de abrir. Pruebe recargando la página.', 'error');
   }
 
   /**
@@ -2236,12 +1916,8 @@ var Sala = (function () {
        versión del estado dando vueltas. */
     soyAnfitrion: function () { return !!(S.estado && S.estado.soyAnfitrion); },
     hayRonda: function () { return hayShow(S.estado); },
-    alEntrarAJitsi: alEntrarAJitsi,
     alVolverAlFrente: alVolverAlFrente,
-    alColgar: alColgar,
-    alCambiarRol: alCambiarRol,
     alEntrarAReunion: alEntrarAReunion,
-    avisarModeradorDemorado: avisarModeradorDemorado,
     cerrarCelebracion: cerrarCelebracion,
     repetirSirena: repetirSirena
   };
@@ -2249,15 +1925,16 @@ var Sala = (function () {
 
 
 /* ══════════════════════════════════════════════════════════════════════════
-   Pantalla completa — la del PORTAL, no la de Jitsi
+   Pantalla completa — la pantalla que se PROYECTA
    ══════════════════════════════════════════════════════════════════════════ */
 /*
- * 🔴 Por qué existe: la pantalla completa de Jitsi maximiza SOLO su iframe.
+ * 🔴 Por qué existe: con Google Meet en OTRA pestaña, esta es la pantalla que la
+ * filial mira junta. Acá viven la cuenta regresiva, los botones de producción y el
+ * festejo, y es lo que se proyecta en la reunión.
  *
- * Todo lo que el portal dibuja —los botones de producción, la cuenta regresiva, el
- * festejo— vive FUERA de ese iframe, así que al maximizar desaparecía justo en el
- * momento en que más se mira la pantalla. Por eso se esconde la de Jitsi (ver
- * `toolbarButtons`) y se agranda el contenedor entero.
+ * Nació cuando el video estaba incrustado, porque la pantalla completa de aquel
+ * maximizaba solo su iframe y se llevaba puesto todo lo que dibuja el portal. Hoy
+ * vale más todavía: no hay ningún video que pueda taparla.
  */
 var Pantalla = (function () {
   var DESTINO = '.sala-layout';
@@ -2536,7 +2213,9 @@ var Dashboard = (function () {
       var e = ESTADO[s.estado] || ESTADO.offline;
       var img = PORTADA[s.id];
       return '' +
-        '<button class="sala-card" data-sala="' + UI.esc(s.id) + '" style="--acento:' + UI.esc(s.color) + '">' +
+        '<button class="sala-card" data-sala="' + UI.esc(s.id) + '"' +
+          ' data-meet="' + UI.esc(s.meetUrl || '') + '"' +
+          ' style="--acento:' + UI.esc(s.color) + '">' +
           '<div class="sala-portada">' +
             (img ? '<img src="' + UI.esc(img) + '" alt="" loading="lazy">' : '') +
             '<span class="chip ' + e.chip + ' sala-estado">' +
@@ -2554,15 +2233,49 @@ var Dashboard = (function () {
               '<span>' + (s.anfitrion
                 ? '<span class="material-symbols-rounded" style="font-size:15px">shield_person</span> ' + UI.esc(s.anfitrion.nombre)
                 : 'Sin anfitrión') + '</span>' +
-              '<span class="sala-entrar">Entrar a la sala' +
-                '<span class="material-symbols-rounded">arrow_forward</span></span>' +
+              '<span class="sala-entrar">' + (s.meetUrl ? 'Entrar a la reunión' : 'Entrar a la sala') +
+                '<span class="material-symbols-rounded">' +
+                (s.meetUrl ? 'open_in_new' : 'arrow_forward') + '</span></span>' +
             '</div>' +
           '</div>' +
         '</button>';
     }).join('');
 
+    /*
+     * ══════════════════════════════════════════════════════════════════════
+     * UN SOLO CLIC (sep 2026, decisión del dueño)
+     * ══════════════════════════════════════════════════════════════════════
+     *
+     * Antes entrar a una reunión costaba 2 clics al asesor y 3 al anfitrión, con
+     * una espera ciega en el medio. Ahora el clic en la tarjeta hace las tres
+     * cosas: abre Meet, entra a la sala del portal y arranca el conteo de
+     * asistencia. Si además esta persona puede ser anfitrión y la sala está
+     * libre, la toma y la abre sola (ver `autoTomarSala`).
+     *
+     * 🔴 EL ORDEN NO ES ESTÉTICO, y `window.open` va PRIMERO Y SÍNCRONO.
+     *
+     * El navegador solo deja abrir una pestaña dentro del manejador del clic. En
+     * cuanto se hace después de un `then` —o de cualquier viaje al servidor— la
+     * trata como ventana emergente y la BLOQUEA: no hay error, no hay aviso, solo
+     * una tarjeta que aparenta no hacer nada. Por eso el enlace viene en la lista
+     * de salas y no se pide al apretar.
+     *
+     * ⚠️ Y la asistencia va DESPUÉS de `irASala`: `Sala.entrar` pasa por
+     * `salir()`, que pone `S.enReunion` en false. Llamándola antes, el latido
+     * arranca y el cambio de sala lo apaga en el mismo gesto — sin que nada falle.
+     */
     Array.prototype.forEach.call(cont.querySelectorAll('.sala-card'), function (c) {
-      c.onclick = function () { App.irASala(c.getAttribute('data-sala')); };
+      c.onclick = function () {
+        var url = c.getAttribute('data-meet') || '';
+        /*
+         * Sin enlace NO se abre una pestaña en blanco: se entra igual a la sala y
+         * el panel explica que falta crear la reunión (pasa con una organización
+         * recién fundada, hasta la sincronización de la madrugada).
+         */
+        if (url) window.open(url, '_blank', 'noopener');
+        App.irASala(c.getAttribute('data-sala'));
+        if (url) Sala.alEntrarAReunion(true);
+      };
     });
 
     /*
@@ -2638,7 +2351,8 @@ var Asistencia = (function () {
    * reunión se proyecta y una ventana del navegador queda encima de todo, además de
    * que algunos navegadores la bloquean y el clic no haría nada.
    */
-  var V = { fecha: '', turno: '', personas: [], puedeEditar: false, pidiendo: '' };
+  var V = { fecha: '', turno: '', personas: [], puedeEditar: false,
+            pidiendo: '', pidiendoModo: '', enviando: '' };
 
   function estadoChip(p) {
     if (p.estado === 'PRESENTE') {
@@ -2649,15 +2363,29 @@ var Asistencia = (function () {
       (p.revisado ? '' : ' <span class="chip">sin revisar</span>');
   }
 
+  /*
+   * En qué sala se lo registró. Puede ser más de una en el mismo turno: desde sep
+   * 2026 el Director usa la sala que le convenga según la estrategia del día, así
+   * que "estuvo" sin "dónde" no alcanza para revisar nada.
+   */
+  function salasDe(p) {
+    var s = p.salas || [];
+    if (!s.length) return '';
+    return '<br><span style="color:var(--txt-dim)">En ' + UI.esc(s.join(' · ')) + '</span>';
+  }
+
   function origen(p) {
+    var obs = p.observacion
+      ? '<br><span class="verif-obs">' + UI.esc(p.observacion) + '</span>' : '';
     if (p.revisado) {
       return 'Lo marcó ' + UI.esc(p.por) + (p.cuando ? ' · ' + UI.hora(p.cuando) : '') +
-        (p.motivo ? '<br><span style="color:var(--txt-dim)">Motivo: ' + UI.esc(p.motivo) + '</span>' : '');
+        (p.motivo ? '<br><span style="color:var(--txt-dim)">Motivo: ' + UI.esc(p.motivo) + '</span>' : '') +
+        obs + salasDe(p);
     }
     // Sin revisar: se dice qué vio el portal, que es de dónde sale el valor de hoy.
-    return p.automatico === 'VALIDADO'
+    return (p.automatico === 'VALIDADO'
       ? 'El portal lo registró' + (p.ingreso ? ' ' + UI.hora(p.ingreso) : '')
-      : '<span style="color:var(--txt-dim)">El portal no lo registró</span>';
+      : '<span style="color:var(--txt-dim)">El portal no lo registró</span>') + salasDe(p);
   }
 
   function pintarVerif(r) {
@@ -2671,12 +2399,32 @@ var Asistencia = (function () {
      * propósito: el modo "mostrar la caja aunque no haya gente" seguía en verde.
      */
     caja.setAttribute('data-listo', '1');
+    /*
+     * 🔴 Un RECHAZO del servidor se muestra; no se esconde la caja.
+     *
+     * "No tengo gente a cargo" y "el servidor no aceptó lo que pediste" se veían
+     * igual —la caja desaparecía—, así que elegir una fecha que el servidor rechaza
+     * (una reunión que todavía no pasó) borraba la lista de la pantalla sin decir por
+     * qué, y el jefe se quedaba sin forma de volver.
+     */
+    if (r && r.ok === false) {
+      UI.mostrar(caja, true);
+      UI.id('verifSubtitulo').textContent = '';
+      UI.id('verifTabla').innerHTML = '';
+      UI.id('verifAviso').innerHTML =
+        '<div class="aviso aviso-info"><span class="material-symbols-rounded">info</span>' +
+        '<span>' + UI.esc(r.message || 'No se pudo mostrar la lista.') + '</span></div>';
+      return;
+    }
     // Sin gente a cargo no hay nada que verificar: la caja no existe para esa persona.
     if (!r || !r.ok || !r.personas || !r.personas.length) { UI.mostrar(caja, false); return; }
     UI.mostrar(caja, true);
 
     V.fecha = r.fecha; V.turno = r.turno; V.personas = r.personas; V.puedeEditar = !!r.puedeEditar;
     UI.id('verifFecha').value = r.fecha;
+    // El tope lo manda el servidor (ver `hoy` en verificacionLista_): una reunión que
+    // todavía no pasó no se verifica, y así ni se puede elegir.
+    if (r.hoy) UI.id('verifFecha').max = r.hoy;
     UI.id('verifTurno').value = r.turno;
 
     var faltan = r.personas.filter(function (p) { return !p.revisado; }).length;
@@ -2692,22 +2440,46 @@ var Asistencia = (function () {
         '<th>Nombre</th><th>Cargo</th><th>Asistencia</th><th>De dónde sale</th><th></th>' +
       '</tr></thead><tbody>' +
       r.personas.map(function (p) {
-        var pidiendo = V.pidiendo === p.email;
+        var pidiendo = V.pidiendo === p.email ? V.pidiendoModo : '';
         return '<tr data-email="' + UI.esc(p.email) + '">' +
           '<td style="font-weight:600">' + UI.esc(p.nombre) + '</td>' +
           '<td style="color:var(--txt-dim);font-size:12.5px">' + UI.esc(p.cargo) + '</td>' +
           '<td>' + estadoChip(p) + '</td>' +
           '<td style="font-size:12.5px">' + origen(p) + '</td>' +
           '<td style="text-align:right;white-space:nowrap">' +
-            (!V.puedeEditar ? '' : pidiendo
+            /*
+             * 🔴 Lo que se escribe va EN LA FILA, nunca con `prompt()`: la reunión se
+             * proyecta, una ventana del navegador queda encima de todo, y algunos
+             * navegadores directamente la bloquean —el clic no haría nada—.
+             *
+             * Dos campos distintos a propósito (sep 2026):
+             *   · MOTIVO       solo al marcar ausente, y es OBLIGATORIO: lo que queda
+             *                  escrito es que un jefe afirmó que faltó.
+             *   · OBSERVACIÓN  opcional y para los dos casos. Con Meet afuera el
+             *                  portal no ve la cámara de nadie, así que esto es lo
+             *                  único que deja constancia de "estuvo pero no encendió
+             *                  cámara" o "mejorar marca personal".
+             */
+            (!V.puedeEditar ? '' : pidiendo === 'ausente'
               ? '<span class="verif-motivo">' +
                   '<input type="text" class="verif-texto" data-motivo="' + UI.esc(p.email) + '" ' +
                     'placeholder="¿Por qué faltó?" maxlength="120">' +
+                  '<input type="text" class="verif-texto" data-obs="' + UI.esc(p.email) + '" ' +
+                    'placeholder="Observación (opcional)" maxlength="300">' +
                   '<button class="btn btn-peligro" data-guardar="' + UI.esc(p.email) + '">Guardar</button>' +
+                  '<button class="btn" data-cancelar="1">Cancelar</button>' +
+                '</span>'
+              : pidiendo === 'presente'
+              ? '<span class="verif-motivo">' +
+                  '<input type="text" class="verif-texto" data-obs="' + UI.esc(p.email) + '" ' +
+                    'placeholder="Observación (opcional)" maxlength="300">' +
+                  '<button class="btn btn-primario" data-guardar-ok="' + UI.esc(p.email) + '">Guardar</button>' +
                   '<button class="btn" data-cancelar="1">Cancelar</button>' +
                 '</span>'
               : '<button class="btn" data-presente="' + UI.esc(p.email) + '" title="Estuvo en la reunión">' +
                   '<span class="material-symbols-rounded">check_circle</span> Presente</button> ' +
+                '<button class="btn" data-observar="' + UI.esc(p.email) + '" title="Anotar una observación">' +
+                  '<span class="material-symbols-rounded">edit_note</span></button> ' +
                 '<button class="btn" data-ausente="' + UI.esc(p.email) + '" title="No estuvo">' +
                   '<span class="material-symbols-rounded">cancel</span> Ausente</button>') +
           '</td>' +
@@ -2716,7 +2488,8 @@ var Asistencia = (function () {
       '</tbody></table></div>';
 
     if (V.pidiendo) {
-      var caja2 = UI.$('[data-motivo="' + V.pidiendo + '"]');
+      var caja2 = UI.$('[data-motivo="' + V.pidiendo + '"]') ||
+                  UI.$('[data-obs="' + V.pidiendo + '"]');
       if (caja2) caja2.focus();
     }
   }
@@ -2752,45 +2525,91 @@ var Asistencia = (function () {
       });
   }
 
-  function marcar(email, presente, motivo) {
-    // 🔴 Escribe: NO se reintenta sola (ver POST_REPETIBLE). Un reintento agregaría
-    // otra fila con la misma corrección: no cambia el resultado, pero ensucia el
-    // registro de quién la hizo y cuándo.
+  /** Apaga o devuelve los botones de la tabla mientras una corrección viaja. */
+  function botonesVerif(apagados) {
+    var t = UI.id('verifTabla');
+    if (!t) return;
+    var bs = t.querySelectorAll('button');
+    for (var i = 0; i < bs.length; i++) bs[i].disabled = apagados;
+  }
+
+  function marcar(email, presente, motivo, observacion) {
+    /*
+     * 🔴 Escribe: NO se reintenta sola (ver POST_REPETIBLE). Un reintento agregaría
+     * otra fila con la misma corrección: no cambia el resultado, pero ensucia el
+     * registro de quién la hizo y cuándo.
+     *
+     * ⚠️ Y el DOBLE CLIC hace exactamente eso mismo, que es lo que el párrafo de
+     * arriba dice querer evitar: dos POST salen igual de rápido que uno. Los botones
+     * se apagan hasta que el servidor conteste; el repintado los devuelve nuevos, y
+     * si la respuesta fue un rechazo se rehabilitan acá (ahí no hay repintado).
+     */
+    if (V.enviando) return Promise.resolve();
+    V.enviando = email;
+    botonesVerif(true);
+
     return API.post({
       accion: 'verificarAsistencia', token: Sesion.token,
       email: email, presente: presente, motivo: motivo || '',
+      observacion: observacion || '',
       fecha: V.fecha, turno: V.turno
     }).then(function (r) {
       if (!r || !r.ok) { UI.toast((r && r.message) || 'No se pudo guardar.', 'error'); return; }
-      V.pidiendo = '';
+      V.pidiendo = ''; V.pidiendoModo = '';
       pintarVerif(r);
       UI.toast(presente ? 'Marcado presente.' : 'Marcado ausente.', 'ok');
-    }).catch(function (e) { UI.toast(e.message || 'Error de conexión.', 'error'); });
+    }).catch(function (e) {
+      UI.toast(e.message || 'Error de conexión.', 'error');
+    }).then(function () {
+      V.enviando = '';
+      botonesVerif(false);
+    });
+  }
+
+  /** Repinta la tabla con lo que ya está en memoria (abrir o cerrar una fila). */
+  function repintarVerif() {
+    pintarVerif({ ok: true, fecha: V.fecha, turno: V.turno, puedeEditar: V.puedeEditar,
+                  motivoCerrado: '', personas: V.personas });
+  }
+
+  function valorDe(sel, email) {
+    var caja = UI.$('[' + sel + '="' + email + '"]');
+    return caja ? caja.value.trim() : '';
   }
 
   function alClic(ev) {
     var b = ev.target.closest && ev.target.closest('button');
     if (!b) return;
+
+    // Confirmar presente, sin decir nada más: es el camino de todos los días.
     if (b.getAttribute('data-presente')) { marcar(b.getAttribute('data-presente'), true); return; }
+
+    // Presente PERO con algo que decir ("no encendió cámara", "mejorar marca").
+    if (b.getAttribute('data-observar')) {
+      V.pidiendo = b.getAttribute('data-observar'); V.pidiendoModo = 'presente';
+      repintarVerif();
+      return;
+    }
     if (b.getAttribute('data-ausente')) {
-      V.pidiendo = b.getAttribute('data-ausente');
-      pintarVerif({ ok: true, fecha: V.fecha, turno: V.turno, puedeEditar: V.puedeEditar,
-                    motivoCerrado: '', personas: V.personas });
+      V.pidiendo = b.getAttribute('data-ausente'); V.pidiendoModo = 'ausente';
+      repintarVerif();
       return;
     }
     if (b.getAttribute('data-cancelar')) {
-      V.pidiendo = '';
-      pintarVerif({ ok: true, fecha: V.fecha, turno: V.turno, puedeEditar: V.puedeEditar,
-                    motivoCerrado: '', personas: V.personas });
+      V.pidiendo = ''; V.pidiendoModo = '';
+      repintarVerif();
       return;
     }
+
+    var okEmail = b.getAttribute('data-guardar-ok');
+    if (okEmail) { marcar(okEmail, true, '', valorDe('data-obs', okEmail)); return; }
+
     var email = b.getAttribute('data-guardar');
     if (email) {
-      var caja = UI.$('[data-motivo="' + email + '"]');
-      var texto = caja ? caja.value.trim() : '';
+      var texto = valorDe('data-motivo', email);
       // El servidor lo exige igual; acá se avisa sin gastar un viaje.
       if (texto.length < 4) { UI.toast('Escriba el motivo para marcar ausente.', 'error'); return; }
-      marcar(email, false, texto);
+      marcar(email, false, texto, valorDe('data-obs', email));
     }
   }
 
@@ -3066,6 +2885,7 @@ var App = (function () {
 
     UI.id('loginForm').addEventListener('submit', login);
     UI.id('btnSalir').addEventListener('click', salir);
+    UI.id('btnTema').addEventListener('click', Tema.alternar);
     UI.id('btnVolverSalas').addEventListener('click', function () { irA('dashboard'); });
     UI.id('btnRecargarAsistencia').addEventListener('click', Asistencia.cargar);
     UI.id('btnGuardarApi').addEventListener('click', Config.guardar);

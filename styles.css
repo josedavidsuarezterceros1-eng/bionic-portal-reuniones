@@ -3,8 +3,96 @@
    CSS vanilla con custom properties. Sin Tailwind, sin build.
    ══════════════════════════════════════════════════════════════════════════ */
 
+/* ══════════════════════════════════════════════════════════════════════════
+   TEMA
+   ══════════════════════════════════════════════════════════════════════════
+
+   🔴 EL CLARO ES EL DEFAULT (sep 2026, decisión del dueño). Va en `:root` a secas
+   y el oscuro cuelga de `[data-theme="dark"]`, no al revés: así, si el atributo no
+   llegara a escribirse —un navegador raro, el script del <head> que no corre— lo
+   que queda es lo que el dueño pidió, no lo otro.
+
+   ⚠️ El atributo se pone ANTES del primer pintado, con un script chiquito en el
+   <head> de index.html. Hacerlo desde app.js (que va con `defer`) deja un
+   parpadeo oscuro en cada carga.
+
+   ⚠️ Todo color va por TOKEN. Los que estaban escritos a mano —`rgba(255,255,255,
+   …)` para superficies y bordes, `rgba(0,0,0,…)` para sombras— asumían fondo
+   oscuro y en claro quedaban invisibles o negros. Si hace falta un color nuevo, se
+   agrega acá arriba y se define en los DOS temas.
+
+   🔴 Lo único que NO sigue al tema es el FESTEJO (`#celebracion`) y la portada de
+   cada sala: son lo que se proyecta y lo que identifica a la marca. Un festejo
+   sobre blanco pierde el confeti y la foto.
+   ══════════════════════════════════════════════════════════════════════════ */
+
 :root {
-  /* ── Color ─────────────────────────────────────────────────────────── */
+  /* ── Color — TEMA CLARO (el default) ───────────────────────────────── */
+  --bg:            #f3f6fb;
+  --bg-elev:       #ffffff;
+  --bg-elev-2:     #eaf0f8;
+  --surface:       rgba(15, 37, 64, 0.035);
+  --surface-hover: rgba(15, 37, 64, 0.065);
+  --borde:         rgba(15, 37, 64, 0.13);
+  --borde-fuerte:  rgba(15, 37, 64, 0.24);
+
+  --txt:      #0f2540;
+  --txt-dim:  #4c6482;
+  --txt-mute: #7589a1;
+
+  --azul:      #2563eb;
+  --azul-soft: rgba(37, 99, 235, 0.10);
+  --verde:      #047857;
+  --verde-soft: rgba(4, 120, 87, 0.11);
+  --ambar:      #b45309;
+  --ambar-soft: rgba(180, 83, 9, 0.12);
+  --rojo:       #dc2626;
+  --rojo-soft:  rgba(220, 38, 38, 0.09);
+  --violeta:    #7c3aed;
+
+  /* Colores que antes iban escritos a mano en cada regla. */
+  --input-bg:     #ffffff;
+  --scroll-thumb: rgba(15, 37, 64, 0.20);
+  --scroll-thumb-hover: rgba(15, 37, 64, 0.32);
+  --linea-tabla:  rgba(15, 37, 64, 0.08);
+  --overlay:      rgba(15, 37, 64, 0.30);
+  --marco-bg:     #e7eef7;
+  --pista:        rgba(15, 37, 64, 0.10);
+  --topbar-bg:    rgba(255, 255, 255, 0.86);
+  --toast-bg:     rgba(255, 255, 255, 0.98);
+  /*
+   * 🔴 Texto de color. Iban escritos a mano como pasteles claros (#fca5a5,
+   * #6ee7b7, #93c5fd…) que solo se leen sobre fondo oscuro: en claro quedaban
+   * lavados hasta desaparecer. Lo encontró una CAPTURA, con las dos suites en
+   * verde — ningún check mira apariencia.
+   */
+  --txt-rojo:  #b91c1c;
+  --txt-verde: #047857;
+  --txt-azul:  #1d4ed8;
+  --txt-ambar: #a16207;
+  --halo-bg:      rgba(37, 99, 235, 0.07);
+  --halo-bg-2:    rgba(4, 120, 87, 0.06);
+
+  /* ── Tipografía ────────────────────────────────────────────────────── */
+  --font-display: 'Outfit', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-txt:     'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /* ── Espaciado y forma ─────────────────────────────────────────────── */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 24px; --sp-6: 32px; --sp-7: 48px; --sp-8: 64px;
+
+  --r-sm: 8px;  --r-md: 12px; --r-lg: 18px; --r-xl: 26px; --r-full: 999px;
+
+  --sombra:      0 4px 18px rgba(15, 37, 64, 0.10);
+  --sombra-alta: 0 18px 50px rgba(15, 37, 64, 0.20);
+  --glass:       blur(18px) saturate(140%);
+
+  --t-rapido: 140ms cubic-bezier(0.4, 0, 0.2, 1);
+  --t-medio:  260ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── Color — TEMA OSCURO ─────────────────────────────────────────────── */
+:root[data-theme="dark"] {
   --bg:            #0b1c30;
   --bg-elev:       #0f2540;
   --bg-elev-2:     #143050;
@@ -27,22 +115,24 @@
   --rojo-soft:  rgba(239, 68, 68, 0.14);
   --violeta:    #8b5cf6;
 
-  /* ── Tipografía ────────────────────────────────────────────────────── */
-  --font-display: 'Outfit', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-txt:     'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
-
-  /* ── Espaciado y forma ─────────────────────────────────────────────── */
-  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
-  --sp-5: 24px; --sp-6: 32px; --sp-7: 48px; --sp-8: 64px;
-
-  --r-sm: 8px;  --r-md: 12px; --r-lg: 18px; --r-xl: 26px; --r-full: 999px;
+  --input-bg:     rgba(0, 0, 0, 0.22);
+  --scroll-thumb: rgba(255, 255, 255, 0.12);
+  --scroll-thumb-hover: rgba(255, 255, 255, 0.2);
+  --linea-tabla:  rgba(255, 255, 255, 0.05);
+  --overlay:      rgba(0, 0, 0, 0.35);
+  --marco-bg:     #071322;
+  --pista:        rgba(255, 255, 255, 0.08);
+  --topbar-bg:    rgba(11, 28, 48, 0.82);
+  --toast-bg:     rgba(20, 48, 80, 0.96);
+  --txt-rojo:  #fca5a5;
+  --txt-verde: #6ee7b7;
+  --txt-azul:  #93c5fd;
+  --txt-ambar: #fcd34d;
+  --halo-bg:      rgba(59, 130, 246, 0.16);
+  --halo-bg-2:    rgba(16, 185, 129, 0.11);
 
   --sombra:      0 4px 20px rgba(0, 0, 0, 0.35);
   --sombra-alta: 0 18px 50px rgba(0, 0, 0, 0.55);
-  --glass:       blur(18px) saturate(140%);
-
-  --t-rapido: 140ms cubic-bezier(0.4, 0, 0.2, 1);
-  --t-medio:  260ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -51,8 +141,8 @@ html, body { height: 100%; }
 
 body {
   background:
-    radial-gradient(1100px 600px at 82% -12%, rgba(59, 130, 246, 0.16), transparent 62%),
-    radial-gradient(900px 520px at 4% 108%, rgba(16, 185, 129, 0.11), transparent 60%),
+    radial-gradient(1100px 600px at 82% -12%, var(--halo-bg), transparent 62%),
+    radial-gradient(900px 520px at 4% 108%, var(--halo-bg-2), transparent 60%),
     var(--bg);
   background-attachment: fixed;
   color: var(--txt);
@@ -74,8 +164,8 @@ h1, h2, h3, h4, .display { font-family: var(--font-display); font-weight: 600; l
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: var(--r-full); }
-::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
+::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: var(--r-full); }
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
 
 .oculto { display: none !important; }
 
@@ -121,7 +211,7 @@ h1, h2, h3, h4, .display { font-family: var(--font-display); font-weight: 600; l
 }
 .btn-verde:hover:not(:disabled) { background: linear-gradient(135deg, #22c58f, #06a677); }
 
-.btn-peligro { background: var(--rojo-soft); border-color: rgba(239, 68, 68, 0.35); color: #fca5a5; }
+.btn-peligro { background: var(--rojo-soft); border-color: rgba(239, 68, 68, 0.35); color: var(--txt-rojo); }
 .btn-peligro:hover:not(:disabled) { background: rgba(239, 68, 68, 0.22); }
 
 .btn-fantasma { background: transparent; }
@@ -136,7 +226,7 @@ input[type="text"], input[type="password"], input[type="email"], input[type="url
   padding: 12px 14px;
   border: 1px solid var(--borde);
   border-radius: var(--r-md);
-  background: rgba(0, 0, 0, 0.22);
+  background: var(--input-bg);
   color: var(--txt);
   font: 400 14.5px/1.4 var(--font-txt);
   transition: border-color var(--t-rapido), box-shadow var(--t-rapido);
@@ -161,10 +251,10 @@ input::placeholder { color: var(--txt-mute); }
 /* Sin esto, "SIN ABRIR" se parte en dos renglones dentro de la tarjeta de sala y
    cada tarjeta queda de un alto distinto. */
 .chip { white-space: nowrap; flex: none; }
-.chip-verde { background: var(--verde-soft); border-color: rgba(16, 185, 129, 0.34); color: #6ee7b7; }
-.chip-azul  { background: var(--azul-soft);  border-color: rgba(59, 130, 246, 0.34); color: #93c5fd; }
-.chip-ambar { background: var(--ambar-soft); border-color: rgba(245, 158, 11, 0.34); color: #fcd34d; }
-.chip-rojo  { background: var(--rojo-soft);  border-color: rgba(239, 68, 68, 0.34);  color: #fca5a5; }
+.chip-verde { background: var(--verde-soft); border-color: rgba(16, 185, 129, 0.34); color: var(--txt-verde); }
+.chip-azul  { background: var(--azul-soft);  border-color: rgba(59, 130, 246, 0.34); color: var(--txt-azul); }
+.chip-ambar { background: var(--ambar-soft); border-color: rgba(245, 158, 11, 0.34); color: var(--txt-ambar); }
+.chip-rojo  { background: var(--rojo-soft);  border-color: rgba(239, 68, 68, 0.34);  color: var(--txt-rojo); }
 
 .tarjeta {
   background: var(--surface);
@@ -235,9 +325,9 @@ input::placeholder { color: var(--txt-mute); }
   line-height: 1.45;
 }
 .aviso .material-symbols-rounded { font-size: 18px; flex: none; margin-top: 1px; }
-.aviso-error { background: var(--rojo-soft); border: 1px solid rgba(239, 68, 68, 0.32); color: #fca5a5; }
-.aviso-info  { background: var(--azul-soft); border: 1px solid rgba(59, 130, 246, 0.32); color: #bfdbfe; }
-.aviso-ok    { background: var(--verde-soft); border: 1px solid rgba(16, 185, 129, 0.32); color: #a7f3d0; }
+.aviso-error { background: var(--rojo-soft); border: 1px solid rgba(239, 68, 68, 0.32); color: var(--txt-rojo); }
+.aviso-info  { background: var(--azul-soft); border: 1px solid rgba(59, 130, 246, 0.32); color: var(--txt-azul); }
+.aviso-ok    { background: var(--verde-soft); border: 1px solid rgba(16, 185, 129, 0.32); color: var(--txt-verde); }
 
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -250,7 +340,7 @@ input::placeholder { color: var(--txt-mute); }
   position: sticky; top: 0; z-index: 40;
   display: flex; align-items: center; gap: var(--sp-4);
   padding: 10px clamp(12px, 3vw, 26px);
-  background: rgba(11, 28, 48, 0.82);
+  background: var(--topbar-bg);
   border-bottom: 1px solid var(--borde);
   backdrop-filter: var(--glass);
   -webkit-backdrop-filter: var(--glass);
@@ -303,7 +393,7 @@ input::placeholder { color: var(--txt-mute); }
   cursor: pointer;
   transition: background var(--t-rapido), color var(--t-rapido);
 }
-.usuario-chip button:hover { background: var(--rojo-soft); color: #fca5a5; }
+.usuario-chip button:hover { background: var(--rojo-soft); color: var(--txt-rojo); }
 .usuario-chip button .material-symbols-rounded { font-size: 17px; }
 
 main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%; margin: 0 auto; }
@@ -388,6 +478,22 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
 }
 .sala-card:hover .sala-portada img { transform: scale(1.05); }
 
+/*
+ * El interruptor de tema. Los DOS iconos están en el HTML y se alternan por CSS,
+ * igual que los de pantalla completa: asignarlos desde JS obliga a acertar en cada
+ * camino de cambio, y el auditor de iconos solo ve los escritos al lado del <span>
+ * — uno puesto desde JS lo daría por sobrante y alguien lo borraría de la lista.
+ */
+.ico-oscuro { display: none; }
+:root[data-theme="dark"] .ico-claro  { display: none; }
+:root[data-theme="dark"] .ico-oscuro { display: inline-block; }
+
+/* La observación del jefe: se distingue del motivo, que es otra cosa. */
+.verif-obs {
+  color: var(--ambar);
+  font-style: italic;
+}
+
 /* Los escudos vienen con fondo claro y la tarjeta es oscura: sin este degradado
    queda un bloque blanco cortado a filo contra el cuerpo. Es el mismo recurso
    que usaba el diseño original. */
@@ -467,7 +573,7 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
   border: 1px solid var(--borde);
   border-radius: var(--r-lg);
   overflow: hidden;
-  background: #071322;
+  background: var(--marco-bg);
 }
 .video-marco iframe { width: 100%; height: 100%; border: 0; display: block; }
 
@@ -477,9 +583,17 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
   gap: var(--sp-3);
   padding: var(--sp-6);
   text-align: center;
+  /*
+   * ⚠️ El halo azul va sobre `--marco-bg`, no sobre un color escrito a mano.
+   *
+   * Con el `#071322` fijo, en tema claro este panel quedaba NEGRO con el texto
+   * oscuro encima: "Está en la reunión" se leía apenas y el botón de volver
+   * flotaba sobre una caja que no pintaba nada. Lo encontró una captura, con las
+   * dos suites en verde.
+   */
   background:
-    radial-gradient(600px 320px at 50% 30%, rgba(59, 130, 246, 0.14), transparent 70%),
-    #071322;
+    radial-gradient(600px 320px at 50% 30%, var(--halo-bg), transparent 70%),
+    var(--marco-bg);
 }
 .video-espera .material-symbols-rounded { font-size: 52px; color: var(--txt-mute); }
 .video-espera h3 { font-size: 19px; }
@@ -496,6 +610,8 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
   position: absolute; top: 10px; right: 10px; z-index: 4;
   width: 38px; height: 38px; display: grid; place-items: center;
   border-radius: 10px; cursor: pointer;
+  /* Oscuro en los DOS temas a propósito: flota sobre el área que se proyecta, y
+     un control que cambia de color con el tema se pierde contra el video. */
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: rgba(7, 19, 34, 0.62);
   color: #e8eefc;
@@ -624,7 +740,7 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
 .reloj { position: relative; width: 148px; height: 148px; }
 .reloj svg { width: 100%; height: 100%; transform: rotate(-90deg); }
 .reloj circle { fill: none; stroke-width: 9; stroke-linecap: round; }
-.reloj .pista { stroke: rgba(255, 255, 255, 0.08); }
+.reloj .pista { stroke: var(--pista); }
 .reloj .barra { stroke: var(--azul); transition: stroke-dashoffset 0.95s linear, stroke 400ms; }
 /* La ANTESALA: el anillo entero y el número en el color de acento. No se está
    agotando nada todavía — se está anunciando, así que nada de rojo ni de latido. */
@@ -639,7 +755,7 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
   font-size: 46px; font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-.reloj.critico .num { color: #fca5a5; animation: latir 1s ease-in-out infinite; }
+.reloj.critico .num { color: var(--txt-rojo); animation: latir 1s ease-in-out infinite; }
 @keyframes latir { 50% { transform: scale(1.09); } }
 
 .countdown-txt { text-align: center; font-size: 13.5px; color: var(--txt-dim); max-width: 30ch; }
@@ -668,7 +784,7 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
   border-radius: var(--r-lg);
   background: var(--verde-soft);
   border: 1px solid rgba(16, 185, 129, 0.32);
-  color: #a7f3d0;
+  color: var(--txt-verde);
   font-size: 13.5px; font-weight: 600;
 }
 
@@ -686,7 +802,23 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
    OVERLAY DE CELEBRACIÓN
    ══════════════════════════════════════════════════════════════════════════ */
 
+/*
+ * 🔴 EL FESTEJO NO SIGUE AL TEMA, y es deliberado (sep 2026).
+ *
+ * Es el momento que se PROYECTA en la reunión: sobre blanco, el confeti se pierde,
+ * la foto de quien vendió queda lavada y el dorado de la insignia desaparece. Por
+ * eso redefine sus propios tokens acá adentro en vez de heredar los del tema — y
+ * por eso esta regla tiene que seguir funcionando con el portal en claro.
+ */
 #celebracion {
+  --txt:      #e9eff7;
+  --txt-dim:  #93a7c0;
+  --borde-fuerte: rgba(255, 255, 255, 0.18);
+  --surface:  rgba(255, 255, 255, 0.045);
+  --surface-hover: rgba(255, 255, 255, 0.075);
+  --borde:    rgba(255, 255, 255, 0.10);
+  --sombra-alta: 0 18px 50px rgba(0, 0, 0, 0.55);
+  color: var(--txt);
   position: fixed; inset: 0; z-index: 90;
   display: grid; place-items: center;
   padding: var(--sp-5);
@@ -759,7 +891,7 @@ thead th {
   border-bottom: 1px solid var(--borde);
   white-space: nowrap;
 }
-tbody td { padding: 12px 15px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+tbody td { padding: 12px 15px; border-bottom: 1px solid var(--linea-tabla); }
 tbody tr:last-child td { border-bottom: none; }
 tbody tr:hover { background: var(--surface); }
 
@@ -789,15 +921,15 @@ tbody tr:hover { background: var(--surface); }
   border-radius: 50%;
   background: var(--azul-soft);
   border: 1px solid rgba(59, 130, 246, 0.34);
-  color: #93c5fd;
+  color: var(--txt-azul);
   font: 700 12px/1 var(--font-txt);
 }
 .paso strong { color: var(--txt); }
 .paso code {
   padding: 2px 6px; border-radius: 5px;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--overlay);
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
-  font-size: 12.5px; color: #a5d6ff;
+  font-size: 12.5px; color: var(--txt-azul);
 }
 
 
@@ -844,9 +976,12 @@ tbody tr:hover { background: var(--surface); }
   display: flex; align-items: flex-start; gap: 10px;
   padding: 12px 15px;
   border-radius: var(--r-md);
-  background: rgba(20, 48, 80, 0.96);
+  /* ⚠️ Iba con el azul oscuro escrito a mano: en tema claro quedaba una caja
+     oscura con el texto oscuro encima, ilegible justo cuando el portal avisa algo. */
+  background: var(--toast-bg);
+  color: var(--txt);
   border: 1px solid var(--borde-fuerte);
-  box-shadow: var(--sombra);
+  box-shadow: var(--sombra-alta);
   font-size: 13.5px; line-height: 1.45;
   animation: entrar-toast 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
@@ -854,9 +989,9 @@ tbody tr:hover { background: var(--surface); }
 .toast.saliendo { animation: salir-toast 200ms ease-in forwards; }
 @keyframes salir-toast { to { opacity: 0; transform: translateX(24px); } }
 .toast .material-symbols-rounded { font-size: 19px; flex: none; margin-top: 1px; }
-.toast-error { border-color: rgba(239, 68, 68, 0.42); } .toast-error .material-symbols-rounded { color: #fca5a5; }
-.toast-ok    { border-color: rgba(16, 185, 129, 0.42); } .toast-ok    .material-symbols-rounded { color: #6ee7b7; }
-.toast-info  .material-symbols-rounded { color: #93c5fd; }
+.toast-error { border-color: rgba(239, 68, 68, 0.42); } .toast-error .material-symbols-rounded { color: var(--txt-rojo); }
+.toast-ok    { border-color: rgba(16, 185, 129, 0.42); } .toast-ok    .material-symbols-rounded { color: var(--txt-verde); }
+.toast-info  .material-symbols-rounded { color: var(--txt-azul); }
 
 
 /* ══════════════════════════════════════════════════════════════════════════

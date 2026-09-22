@@ -3,8 +3,35 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="light dark">
 <title>Portal de Reuniones — Bionic Mind</title>
+
+<!--
+  🔴 EL TEMA SE APLICA ANTES DEL PRIMER PINTADO, y por eso este script va acá
+  arriba y no en app.js?v=c079b5b7.
+
+  `app.js?v=c079b5b7` se carga con `defer`: corre recién después de parsear el documento, así
+  que poner el tema ahí deja un PARPADEO oscuro en cada carga — la página se dibuja
+  con el default y un instante después cambia entera. Se ve barato y, proyectado en
+  la reunión, se ve roto.
+
+  ⚠️ Todo dentro de un try: en una ventana privada o con el almacenamiento
+  bloqueado, leer localStorage LANZA. Sin el try, esa excepción corta el <head> y
+  la página no carga nada.
+
+  ⚠️ El claro es el default y NO se consulta `prefers-color-scheme`: el dueño pidió
+  que arranque en claro, punto. Mirar la preferencia del sistema haría que la mitad
+  del equipo lo viera oscuro sin haberlo elegido.
+-->
+<script>
+  (function () {
+    try {
+      if (localStorage.getItem('portal_tema') === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    } catch (e) { /* sin almacenamiento: queda el claro, que es el default */ }
+  })();
+</script>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -16,7 +43,7 @@
   adentro: 5.347.060 bytes medidos en ago 2026. Con la lista baja a entre 11 KB
   y 54 KB según el subconjunto que negocie el navegador — en producción se
   midieron 11.228 bytes. O sea que esto era el ~98 % del peso de la página: TODO
-  el resto junto (app.js?v=6de21cec, styles.css?v=ec728360, las dos fuentes de texto y el confeti) son
+  el resto junto (app.js?v=c079b5b7, styles.css?v=025cee35, las dos fuentes de texto y el confeti) son
   unos 210 KB.
 
   Y no se ve como "la página pesa": se ve como que los BOTONES TARDAN. Los
@@ -30,7 +57,7 @@
   instante, pero solo si alguien mira esa pantalla: hay un check que los recorre
   todos en `verify-frontend.mjs`.
 
-  Los ejes (opsz, wght, FILL, GRAD) se dejan COMPLETOS a propósito: `styles.css?v=ec728360`
+  Los ejes (opsz, wght, FILL, GRAD) se dejan COMPLETOS a propósito: `styles.css?v=025cee35`
   usa FILL 0 y FILL 1, y recortarlos ganaría poco sobre 54 KB a cambio de romper
   el estilo de forma difícil de rastrear.
 
@@ -38,22 +65,22 @@
   navegador dibujaría la ligadura con la fuente de respaldo y se vería el nombre
   del icono escrito hasta que llegue la buena.
 -->
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=arrow_back,arrow_forward,campaign,cancel,celebration,check_circle,emoji_events,error,event_busy,fact_check,fullscreen,fullscreen_exit,grid_view,groups,hourglass_top,how_to_reg,info,lock_clock,login,logout,manage_accounts,network_check,open_in_new,refresh,running_with_errors,save,savings,settings,shield_person,sync,verified,videocam,visibility,visibility_off,volume_up,workspace_premium&display=block" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=arrow_back,arrow_forward,campaign,cancel,celebration,check_circle,dark_mode,edit_note,emoji_events,error,event_busy,fact_check,fullscreen,fullscreen_exit,grid_view,groups,hourglass_top,how_to_reg,info,light_mode,lock_clock,login,logout,manage_accounts,network_check,open_in_new,refresh,running_with_errors,save,savings,settings,shield_person,sync,verified,videocam,visibility,visibility_off,volume_up,workspace_premium&display=block" rel="stylesheet">
 
-<link rel="stylesheet" href="styles.css?v=ec728360">
+<link rel="stylesheet" href="styles.css?v=025cee35">
 
 <!--
-  Los tres CDN son opcionales por diseño y el portal arranca igual sin ellos:
-    · canvas-confetti  → si no carga, el festejo se ve sin papelitos pero suena y se muestra.
-    · external_api     → si no carga, la sala avisa que no se pudo cargar el video.
-  La videollamada y el festejo no dependen el uno del otro a propósito: una reunión
-  no se cae entera porque un CDN esté lento.
+  El único CDN es opcional por diseño y el portal arranca igual sin él: si
+  canvas-confetti no carga, el festejo se ve sin papelitos pero suena y se muestra.
+
+  🔴 Acá vivía también el External API de JaaS, que ya no se usa: desde sep 2026 la
+  videollamada es Google Meet y vive en OTRA PESTAÑA, no incrustada. Se bajaba en
+  cada carga para alimentar código que ya no llamaba nadie. No volver a agregarlo
+  "por si acaso": Meet no se puede incrustar y el síntoma sería un recuadro en
+  blanco sin ningún error en la consola.
 -->
 <script defer src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
-<!-- El External API se sirve desde JaaS, NO desde meet.jit.si: el de allá corta
-     las llamadas incrustadas a los 5 minutos (probado en ago 2026). -->
-<script defer src="https://8x8.vc/external_api.js"></script>
-<script defer src="app.js?v=6de21cec"></script>
+<script defer src="app.js?v=c079b5b7"></script>
 </head>
 <body>
 
@@ -138,6 +165,10 @@
         <span class="nom" id="uNombre">—</span>
         <span class="car" id="uCargo">—</span>
       </div>
+      <button id="btnTema" title="Cambiar entre claro y oscuro" aria-label="Cambiar el tema">
+        <span class="material-symbols-rounded ico-claro">dark_mode</span>
+        <span class="material-symbols-rounded ico-oscuro">light_mode</span>
+      </button>
       <button id="btnSalir" title="Cerrar sesión" aria-label="Cerrar sesión">
         <span class="material-symbols-rounded">logout</span>
       </button>
@@ -205,23 +236,36 @@
           </div>
         </div>
 
-        <aside class="panel-lado">
-          <!-- Anfitrión -->
-          <div class="bloque">
-            <h4><span class="material-symbols-rounded">shield_person</span> Anfitrión</h4>
-            <div id="anfitrionCuerpo"></div>
-          </div>
+        <!--
+          🔴 EL ORDEN DE LOS BLOQUES NO ES DECORATIVO (sep 2026, pedido del dueño).
 
-          <!-- Festejo -->
+          Hasta acá el primero era "Anfitrión", que es justamente el que NO usa
+          casi nadie: para la filial entera es un dato, no una acción. Arriba va lo
+          que se aprieta en la reunión —la producción— y después lo que cada uno
+          mira de sí mismo. El anfitrión queda al final, compacto.
+
+          ⚠️ En el teléfono el panel se apoya abajo y con poco alto: lo que quede
+          primero es lo único que se ve sin desplazar. Mover "Anfitrión" arriba
+          otra vez deja los botones de producción fuera de pantalla justo en el
+          festejo, que es cuando más se usa.
+        -->
+        <aside class="panel-lado">
+          <!-- Festejo: lo que se aprieta. Va PRIMERO. -->
           <div class="bloque" id="bloqueFestejo">
             <h4><span class="material-symbols-rounded">celebration</span> Producción</h4>
             <div id="festejoCuerpo"></div>
           </div>
 
-          <!-- Asistencia -->
+          <!-- Asistencia: lo que cada uno mira de sí mismo. -->
           <div class="bloque">
             <h4><span class="material-symbols-rounded">how_to_reg</span> Su asistencia</h4>
             <div id="asistenciaCuerpo"></div>
+          </div>
+
+          <!-- Anfitrión: para la mayoría es un DATO, no una acción. Va al final. -->
+          <div class="bloque">
+            <h4><span class="material-symbols-rounded">shield_person</span> Anfitrión</h4>
+            <div id="anfitrionCuerpo"></div>
           </div>
         </aside>
       </div>
@@ -269,7 +313,7 @@
          Sin pestaña en la barra: se llega solo poniendo #config en la dirección.
 
          🔴 No es un secreto, es que NO ES UNA PANTALLA DEL EQUIPO. La dirección del
-         backend ya viene puesta en app.js?v=6de21cec, así que nadie del equipo necesita tocar
+         backend ya viene puesta en app.js?v=c079b5b7, así que nadie del equipo necesita tocar
          nada acá; y un director no tiene por qué ver las tripas de cómo está
          programado el CRM. Cuando la empresa tenga directores que no programan,
          esta pantalla sería ruido que invita a romper algo.
