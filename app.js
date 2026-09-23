@@ -1109,6 +1109,21 @@ var Sala = (function () {
 
   function render() {
     if (!S.estado) return;
+    /*
+     * 🔴 CON RONDA EN CURSO, Producción ocupa el ANCHO COMPLETO.
+     *
+     * Fuera de la ronda el panel son tres tarjetas repartidas a lo ancho y no hay
+     * mucho que hacer —la reunión está en la otra pestaña—. Pero el countdown y
+     * los dos botones de "¡Tengo Matrícula!" son EL momento de esta pantalla, y
+     * en una columna de 400 px quedaban del mismo tamaño que un aviso cualquiera.
+     *
+     * ⚠️ Va por ESTADO y no por transición, al revés que `Pantalla.abrirPorRonda`:
+     * ahí el motivo es que el usuario puede cerrar el panel a mano y el estado se
+     * lo volvería a abrir. Acá no hay nada que el usuario decida, y por estado
+     * queda bien también para quien ENTRA a la sala con la ronda ya empezada.
+     */
+    var panel = UI.$('.panel-lado');
+    if (panel) panel.classList.toggle('con-ronda', hayShow(S.estado));
     renderEspera();
     renderAnfitrion();
     renderFestejo();

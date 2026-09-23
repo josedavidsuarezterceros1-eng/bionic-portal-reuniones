@@ -60,6 +60,10 @@
   --pista:        rgba(15, 37, 64, 0.10);
   --topbar-bg:    rgba(255, 255, 255, 0.86);
   --toast-bg:     rgba(255, 255, 255, 0.98);
+  /* El panel que FLOTA sobre el lienzo en pantalla completa. */
+  --flotante-bg:     rgba(255, 255, 255, 0.92);
+  --flotante-borde:  rgba(15, 37, 64, 0.16);
+  --fondo-proyeccion: #dde6f2;
   /*
    * 🔴 Texto de color. Iban escritos a mano como pasteles claros (#fca5a5,
    * #6ee7b7, #93c5fd…) que solo se leen sobre fondo oscuro: en claro quedaban
@@ -124,6 +128,9 @@
   --pista:        rgba(255, 255, 255, 0.08);
   --topbar-bg:    rgba(11, 28, 48, 0.82);
   --toast-bg:     rgba(20, 48, 80, 0.96);
+  --flotante-bg:     rgba(11, 22, 38, 0.82);
+  --flotante-borde:  rgba(255, 255, 255, 0.14);
+  --fondo-proyeccion: #060b14;
   --txt-rojo:  #fca5a5;
   --txt-verde: #6ee7b7;
   --txt-azul:  #93c5fd;
@@ -558,18 +565,37 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
    SALA — video + panel lateral
    ══════════════════════════════════════════════════════════════════════════ */
 
+/*
+ * 🔴 FUERA DE PANTALLA COMPLETA ESTO ES UNA BARRA, NO UN LIENZO (sep 2026).
+ *
+ * Acá vivía el video incrustado, y por eso el bloque era 16:9 con 320 px de alto
+ * mínimo. Con Google Meet en otra pestaña lo único que quedó adentro es UN BOTÓN:
+ * el dueño lo reportó viendo media pantalla ocupada por una caja vacía para una
+ * función menor, mientras lo que de verdad se usa —pedir producción, anotar una
+ * matrícula, mirar la asistencia— quedaba apretado en una columna al costado.
+ *
+ * Ahora: barra angosta arriba, y el panel pasa a ser EL contenido, repartido a lo
+ * ancho. Cada bloque gana ancho y la página deja de tener 400 px de nada.
+ *
+ * ⚠️ EN PANTALLA COMPLETA NO CAMBIA NADA, y es deliberado: ahí este bloque sí es
+ * la superficie que se PROYECTA en la reunión. Todo lo de abajo está escrito para
+ * que las reglas de :fullscreen devuelvan el lienzo de siempre.
+ */
 .sala-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 348px;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--sp-4);
   align-items: start;
 }
-@media (max-width: 1080px) { .sala-layout { grid-template-columns: minmax(0, 1fr); } }
 
 .video-marco {
   position: relative;
-  aspect-ratio: 16 / 9;
-  min-height: 320px;
+  /* Fila: [icono + textos] [acción] [pantalla completa]. El alto lo define el
+     contenido — sin aspect-ratio ni min-height, que eran del video. */
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding-right: var(--sp-3);
   border: 1px solid var(--borde);
   border-radius: var(--r-lg);
   overflow: hidden;
@@ -578,28 +604,75 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
 .video-marco iframe { width: 100%; height: 100%; border: 0; display: block; }
 
 .video-espera {
-  position: absolute; inset: 0;
-  display: grid; place-content: center; justify-items: center;
-  gap: var(--sp-3);
-  padding: var(--sp-6);
-  text-align: center;
   /*
-   * ⚠️ El halo azul va sobre `--marco-bg`, no sobre un color escrito a mano.
-   *
-   * Con el `#071322` fijo, en tema claro este panel quedaba NEGRO con el texto
-   * oscuro encima: "Está en la reunión" se leía apenas y el botón de volver
-   * flotaba sobre una caja que no pintaba nada. Lo encontró una captura, con las
-   * dos suites en verde.
+   * ⚠️ En FLUJO, no absoluta. Con position:absolute el padre se queda sin alto
+   * —el hijo no lo empuja— y la barra colapsa a cero: el portal queda con una
+   * línea donde iba el estado de la reunión. En pantalla completa vuelve a ser
+   * absoluta, que es lo que la centra sobre el lienzo.
    */
+  flex: 1; min-width: 0;
+  display: flex; align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+  text-align: left;
   background:
     radial-gradient(600px 320px at 50% 30%, var(--halo-bg), transparent 70%),
     var(--marco-bg);
 }
-.video-espera .material-symbols-rounded { font-size: 52px; color: var(--txt-mute); }
-.video-espera h3 { font-size: 19px; }
-.video-espera p { color: var(--txt-dim); font-size: 13.5px; max-width: 46ch; }
+.video-espera .material-symbols-rounded { font-size: 30px; color: var(--txt-mute); flex: none; }
+.video-espera h3 { font-size: 16px; }
+.video-espera p { color: var(--txt-dim); font-size: 13px; max-width: 62ch; margin-top: 2px; }
+/* Los textos al medio; la acción se va al extremo derecho. */
+.video-espera > div:not(#esperaAccion) { flex: 1; min-width: 0; }
+#esperaAccion { flex: none; }
+#esperaAccion .btn-bloque { width: auto; }
 
-.panel-lado { display: flex; flex-direction: column; gap: var(--sp-3); }
+@media (max-width: 720px) {
+  .video-espera { flex-wrap: wrap; gap: var(--sp-3); }
+  #esperaAccion { width: 100%; }
+  #esperaAccion .btn-bloque { width: 100%; }
+}
+
+/*
+ * El panel deja de ser una columna al costado y pasa a ser EL contenido.
+ *
+ * auto-fit + minmax reparte solo: tres columnas en un monitor, dos en una
+ * pantalla chica y una en el teléfono, sin un solo breakpoint escrito a mano.
+ */
+.panel-lado {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--sp-3);
+  align-items: start;
+}
+
+/*
+ * 🔴 Con la ronda en curso, Producción se lleva el ancho completo y se va arriba.
+ *
+ * Es EL momento de esta pantalla: el countdown que todos miran y los dos botones
+ * que hay que apretar. Repartido en una columna de 400 px quedaba del mismo
+ * tamaño que el aviso de "su asistencia", que en ese instante no le importa a
+ * nadie. Fuera de la ronda vuelve solo a ser una tarjeta más.
+ */
+.panel-lado.con-ronda #bloqueFestejo { grid-column: 1 / -1; order: -1; }
+.panel-lado.con-ronda .countdown { padding: var(--sp-4) 0 var(--sp-3); }
+.panel-lado.con-ronda .reloj { width: 190px; height: 190px; }
+.panel-lado.con-ronda .countdown-txt { font-size: 16px; max-width: 46ch; }
+/* Los dos botones, lado a lado y grandes: se aprieta apurado y de lejos. */
+.panel-lado.con-ronda .botones-produccion {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--sp-3);
+  max-width: 720px; margin-left: auto; margin-right: auto;
+}
+.panel-lado.con-ronda .btn-produccion { padding: 22px; font-size: 17px; }
+.panel-lado.con-ronda .btn-produccion .material-symbols-rounded { font-size: 25px; }
+
+/* ⚠️ En pantalla completa el panel es una COLUMNA de 330 px: ahí esto no aplica,
+   o los botones se saldrían del panel flotante. */
+.sala-layout:fullscreen .panel-lado.con-ronda #bloqueFestejo { grid-column: auto; order: 0; }
+.sala-layout:fullscreen .panel-lado.con-ronda .reloj { width: 148px; height: 148px; }
+.sala-layout:fullscreen .panel-lado.con-ronda .botones-produccion { grid-template-columns: 1fr; }
+.sala-layout:fullscreen .panel-lado.con-ronda .btn-produccion { padding: 15px; font-size: 15px; }
 
 /* ── Pantalla completa PROPIA ─────────────────────────────────────────────
    La de Jitsi maximiza solo su iframe y deja afuera lo del portal: los botones
@@ -607,7 +680,15 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
    ENTERO —video + panel— y en ese modo el panel pasa a flotar sobre el video en
    vez de comerle la mitad del ancho.                                        */
 .btn-pantalla {
-  position: absolute; top: 10px; right: 10px; z-index: 4;
+  /*
+   * ⚠️ En FLUJO dentro de la barra, no flotando: con la barra angosta, un botón
+   * absoluto arriba a la derecha se monta encima de «Volver a la reunión». En
+   * pantalla completa vuelve a ser absoluto (ver las reglas de :fullscreen).
+   *
+   * El `order` lo manda al final: en el HTML va primero porque flotaba, y sin
+   * esto quedaría a la IZQUIERDA del icono de estado.
+   */
+  order: 1; flex: none; z-index: 4;
   width: 38px; height: 38px; display: grid; place-items: center;
   border-radius: 10px; cursor: pointer;
   /* Oscuro en los DOS temas a propósito: flota sobre el área que se proyecta, y
@@ -624,29 +705,67 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
 
 .sala-layout:fullscreen {
   display: block;
-  background: var(--fondo, #060b14);
+  background: var(--fondo-proyeccion);
   padding: 0;
 }
 .sala-layout:fullscreen > div:first-child { height: 100%; }
+
+/*
+ * 🔴 ACÁ SE DESHACE LA BARRA: en pantalla completa esto vuelve a ser el LIENZO.
+ *
+ * Fuera de pantalla completa el bloque es una barra angosta (ver arriba), porque
+ * con Meet afuera solo sostiene un botón. Pero proyectado es la superficie que
+ * mira la filial entera, así que recupera el alto completo y el contenido
+ * centrado. Sin estas cuatro reglas, al maximizar quedaría una tira de 70 px
+ * arriba y el resto en negro.
+ */
 .sala-layout:fullscreen .video-marco {
+  display: block;
   height: 100%;
-  aspect-ratio: auto;
+  padding-right: 0;
   border: 0;
   border-radius: 0;
 }
+.sala-layout:fullscreen .video-espera {
+  position: absolute; inset: 0;
+  display: grid; place-content: center; justify-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-6);
+  text-align: center;
+}
+.sala-layout:fullscreen .video-espera .material-symbols-rounded { font-size: 52px; }
+.sala-layout:fullscreen .video-espera h3 { font-size: 19px; }
+.sala-layout:fullscreen .video-espera p { font-size: 13.5px; max-width: 46ch; }
+.sala-layout:fullscreen .btn-pantalla { position: absolute; }
 
 /* El panel deja de ser una columna y pasa a flotar sobre el video. Sigue siendo
    el MISMO panel: no hay una segunda versión de estos bloques que mantener. */
 .sala-layout:fullscreen .panel-lado {
+  /* ⚠️ Fuera de pantalla completa el panel es una GRILLA repartida a lo ancho;
+     acá vuelve a ser la columna flotante de siempre. */
+  display: flex; flex-direction: column;
   position: absolute; top: 14px; right: 14px; z-index: 5;
   width: 330px; max-height: calc(100% - 28px);
   overflow-y: auto;
   padding-right: 2px;
 }
+/*
+ * ⚠️ El panel flotante SIGUE AL TEMA, y hay que decirlo porque parece que no
+ * debería.
+ *
+ * Iba con el azul oscuro escrito a mano. Con el portal en claro (sep 2026) eso
+ * dejaba tres cajas oscuras con el texto OSCURO encima —"En la reunión", "Usted
+ * conduce esta reunión", "Liberar la sala"— justo en la pantalla que se proyecta
+ * delante de toda la filial. Lo encontró una captura, con las dos suites en
+ * verde; es el quinto defecto visual que ningún check ve.
+ *
+ * 🔴 El que NO sigue al tema es el FESTEJO (`#celebracion`): ahí el confeti y la
+ * foto necesitan fondo oscuro sí o sí. Son dos cosas distintas.
+ */
 .sala-layout:fullscreen .panel-lado .bloque {
-  background: rgba(11, 22, 38, 0.82);
+  background: var(--flotante-bg);
   backdrop-filter: blur(10px);
-  border-color: rgba(255, 255, 255, 0.14);
+  border-color: var(--flotante-borde);
 }
 /* Con el panel escondido, el video queda limpio de punta a punta. */
 .sala-layout:fullscreen.panel-oculto .panel-lado { display: none; }
