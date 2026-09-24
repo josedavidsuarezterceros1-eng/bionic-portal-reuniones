@@ -649,30 +649,21 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
 /*
  * 🔴 Con la ronda en curso, Producción se lleva el ancho completo y se va arriba.
  *
- * Es EL momento de esta pantalla: el countdown que todos miran y los dos botones
- * que hay que apretar. Repartido en una columna de 400 px quedaba del mismo
+ * Es EL momento de esta pantalla: la llamada que todos miran y el destape.
+ * Repartido en una columna de 400 px quedaba del mismo
  * tamaño que el aviso de "su asistencia", que en ese instante no le importa a
  * nadie. Fuera de la ronda vuelve solo a ser una tarjeta más.
  */
 .panel-lado.con-ronda #bloqueFestejo { grid-column: 1 / -1; order: -1; }
-.panel-lado.con-ronda .countdown { padding: var(--sp-4) 0 var(--sp-3); }
-.panel-lado.con-ronda .reloj { width: 190px; height: 190px; }
-.panel-lado.con-ronda .countdown-txt { font-size: 16px; max-width: 46ch; }
-/* Los dos botones, lado a lado y grandes: se aprieta apurado y de lejos. */
-.panel-lado.con-ronda .botones-produccion {
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: var(--sp-3);
-  max-width: 720px; margin-left: auto; margin-right: auto;
-}
-.panel-lado.con-ronda .btn-produccion { padding: 22px; font-size: 17px; }
-.panel-lado.con-ronda .btn-produccion .material-symbols-rounded { font-size: 25px; }
+/* A lo ancho, la llamada es EL momento: se canta en grande, como un remate. */
+.panel-lado.con-ronda .llamada { padding: var(--sp-5) 0 var(--sp-4); }
+.panel-lado.con-ronda .llamada-orden { font-size: 19px; }
+.panel-lado.con-ronda .llamada { --golpe: 68px; }
 
 /* ⚠️ En pantalla completa el panel es una COLUMNA de 330 px: ahí esto no aplica,
-   o los botones se saldrían del panel flotante. */
+   o la llamada se saldría del panel flotante. */
 .sala-layout:fullscreen .panel-lado.con-ronda #bloqueFestejo { grid-column: auto; order: 0; }
-.sala-layout:fullscreen .panel-lado.con-ronda .reloj { width: 148px; height: 148px; }
-.sala-layout:fullscreen .panel-lado.con-ronda .botones-produccion { grid-template-columns: 1fr; }
-.sala-layout:fullscreen .panel-lado.con-ronda .btn-produccion { padding: 15px; font-size: 15px; }
+.sala-layout:fullscreen .panel-lado.con-ronda .llamada { --golpe: 44px; }
 
 /* ── Pantalla completa PROPIA ─────────────────────────────────────────────
    La de Jitsi maximiza solo su iframe y deja afuera lo del portal: los botones
@@ -849,63 +840,71 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
 .bloque h4 .material-symbols-rounded { font-size: 15px; }
 
 
-/* ── Countdown ──────────────────────────────────────────────────────────
-   El reloj de teatro y el real se ven IDÉNTICOS a propósito: si el de teatro
-   se distinguiera, todos sabrían al instante que ya no hay nada que anotar y
-   se cae el suspenso, que es el punto entero del festejo. */
+/* ── La llamada: «LA PRIMERA — ¡a la una! ¡a las dos! ¡a las tres!» ─────
+   Reemplazó a la cuenta regresiva de 30 s (sep 2026). Se ve IDÉNTICA haya
+   producción o no: si con el pozo vacío se viera distinta, la sala sabría que no
+   queda nada antes del final y se cae el suspenso, que es el punto del festejo.
 
-.countdown { display: grid; place-items: center; gap: var(--sp-3); padding: var(--sp-3) 0 var(--sp-2); }
+   ⚠️ Cada golpe usa un NOMBRE de animación distinto a propósito. Una animación
+   solo vuelve a correr si cambia su nombre: con uno solo para los tres, el
+   «¡a las dos!» aparecería sin el golpe de entrada. */
 
-.reloj { position: relative; width: 148px; height: 148px; }
-.reloj svg { width: 100%; height: 100%; transform: rotate(-90deg); }
-.reloj circle { fill: none; stroke-width: 9; stroke-linecap: round; }
-.reloj .pista { stroke: var(--pista); }
-.reloj .barra { stroke: var(--azul); transition: stroke-dashoffset 0.95s linear, stroke 400ms; }
-/* La ANTESALA: el anillo entero y el número en el color de acento. No se está
-   agotando nada todavía — se está anunciando, así que nada de rojo ni de latido. */
-.reloj.antesala .barra { stroke: var(--verde); }
-.reloj.antesala .num { color: var(--verde); }
-.reloj.urgente .barra { stroke: var(--ambar); }
-.reloj.critico .barra { stroke: var(--rojo); }
-.reloj .num {
-  position: absolute; inset: 0;
-  display: grid; place-items: center;
-  font-family: var(--font-display);
-  font-size: 46px; font-weight: 700;
-  font-variant-numeric: tabular-nums;
+.llamada {
+  /* El tamaño del golpe, en UN lugar: cada contexto (ancho completo, pantalla
+     completa, teléfono) cambia solo esto. */
+  --golpe: 44px;
+  display: grid; place-items: center; gap: var(--sp-2);
+  padding: var(--sp-4) 0 var(--sp-3);
+  text-align: center;
 }
-.reloj.critico .num { color: var(--txt-rojo); animation: latir 1s ease-in-out infinite; }
-@keyframes latir { 50% { transform: scale(1.09); } }
-
-.countdown-txt { text-align: center; font-size: 13.5px; color: var(--txt-dim); max-width: 30ch; }
-
-.botones-produccion { display: grid; gap: var(--sp-2); margin-top: var(--sp-2); }
-.btn-produccion {
-  display: flex; align-items: center; justify-content: center; gap: 9px;
-  padding: 15px;
-  border: 1px solid transparent;
-  border-radius: var(--r-lg);
-  font: 700 15px/1 var(--font-display);
-  cursor: pointer;
-  color: #06210f;
-  transition: transform var(--t-rapido), filter var(--t-rapido), opacity var(--t-rapido);
+.llamada-orden {
+  font: 700 15px/1.1 var(--font-display);
+  letter-spacing: 0.16em;
+  color: var(--txt-dim);
 }
-.btn-produccion:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
-.btn-produccion:active:not(:disabled) { transform: translateY(1px); }
-.btn-produccion:disabled { opacity: 0.45; cursor: not-allowed; }
-.btn-matricula { background: linear-gradient(135deg, #fbbf24, var(--ambar)); }
-.btn-abono     { background: linear-gradient(135deg, #34d399, var(--verde)); }
-.btn-produccion .material-symbols-rounded { font-size: 21px; }
-
-.ya-registre {
-  display: flex; align-items: center; gap: 10px;
-  padding: 13px 15px;
-  border-radius: var(--r-lg);
-  background: var(--verde-soft);
-  border: 1px solid rgba(16, 185, 129, 0.32);
-  color: var(--txt-verde);
-  font-size: 13.5px; font-weight: 600;
+/*
+ * ⚠️ El alto se reserva contra el tamaño del golpe GRANDE, también en «Preparando».
+ * Con min-height en em, «Preparando» (más chico) dejaba la caja 42 px más baja y al
+ * primer golpe las tarjetas de abajo pegaban un salto — en la pantalla proyectada,
+ * justo cuando arranca la cuenta. Lo encontró una captura.
+ */
+.llamada-golpe {
+  display: flex; align-items: center; justify-content: center;
+  font: 800 var(--golpe)/1.05 var(--font-display);
+  color: var(--txt);
+  min-height: calc(var(--golpe) * 1.12);
 }
+/* «Preparando…»: más chico y apagado. Todavía no se canta nada. */
+.llamada[data-golpe="prep"] .llamada-golpe { font-size: calc(var(--golpe) * 0.5); font-weight: 600; color: var(--txt-dim); }
+.llamada[data-golpe="una"]  .llamada-golpe { animation: golpe-una 460ms cubic-bezier(.2, .9, .3, 1.35); }
+.llamada[data-golpe="dos"]  .llamada-golpe { animation: golpe-dos 460ms cubic-bezier(.2, .9, .3, 1.35); }
+.llamada[data-golpe="tres"] .llamada-golpe {
+  animation: golpe-tres 520ms cubic-bezier(.2, .9, .3, 1.45);
+  color: var(--txt-ambar);
+}
+@keyframes golpe-una  { from { transform: scale(0.6); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes golpe-dos  { from { transform: scale(0.6); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes golpe-tres { from { transform: scale(0.5); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* Tres marcas que se prenden con cada golpe: se lee desde el fondo de la sala. */
+.llamada-marcas { display: flex; gap: 10px; margin-top: var(--sp-1); }
+.llamada-marcas span {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--pista);
+  transition: background 200ms, transform 200ms;
+}
+.llamada[data-golpe="una"]  .llamada-marcas span:nth-child(-n+1),
+.llamada[data-golpe="dos"]  .llamada-marcas span:nth-child(-n+2) { background: var(--azul); transform: scale(1.15); }
+.llamada[data-golpe="tres"] .llamada-marcas span { background: var(--ambar); transform: scale(1.15); }
+
+/* El recordatorio del audio compartido: solo lo ve el anfitrión. */
+.aviso-audio {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin-top: var(--sp-2);
+  font-size: 12.5px; line-height: 1.4;
+  color: var(--txt-dim);
+}
+.aviso-audio .material-symbols-rounded { font-size: 17px; flex-shrink: 0; margin-top: 1px; }
 
 .dato-fila {
   display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
@@ -1127,9 +1126,8 @@ tbody tr:hover { background: var(--surface); }
 
 @media (max-width: 520px) {
   body { font-size: 14.5px; }
-  .video-marco { aspect-ratio: 4 / 3; min-height: 240px; }
-  .reloj { width: 128px; height: 128px; }
-  .reloj .num { font-size: 40px; }
+  .llamada { --golpe: 38px; }
+  .panel-lado.con-ronda .llamada { --golpe: 46px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

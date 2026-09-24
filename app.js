@@ -52,10 +52,9 @@ var Cfg = (function () {
      * El sondeo barato vive en el DASHBOARD (12 s), que es donde de verdad no
      * hay nada urgente que mirar.
      */
-    POLL_ACTIVO_MS: 2000,    // countdown o destape en curso
+    POLL_ACTIVO_MS: 2000,    // llamada o destape en curso
     POLL_SALA_MS: 3500,      // cualquier otro momento dentro de una sala
     ASIS_PING_MS: 60000,     // un latido por minuto con la cámara encendida
-    COUNTDOWN_MS: 30000,     // tiene que coincidir con el backend (solo para el anillo)
 
     url: function () {
       try { return localStorage.getItem(LLAVE_API) || this.URL_POR_DEFECTO; }
@@ -254,13 +253,14 @@ var API = (function () {
    ══════════════════════════════════════════════════════════════════════════ */
 var Reloj = (function () {
   /*
-   * El countdown NO se descuenta en el servidor: el backend manda `finTs`
-   * (un instante absoluto) y `serverNow`. Acá se guarda la diferencia contra el
-   * reloj local y el número se descuenta sin pedir nada por red.
+   * La llamada NO se canta desde el servidor: el backend manda `finTs` (un
+   * instante absoluto) y `serverNow`. Acá se guarda la diferencia contra el reloj
+   * local y los golpes avanzan sin pedir nada por red.
    *
-   * Así el reloj corre suave a 1 tick por segundo aunque la respuesta tarde, y
-   * —lo importante— todas las pantallas de la sala marcan lo mismo, porque todas
-   * apuntan al mismo instante absoluto en vez de contar cada una por su cuenta.
+   * Así corren suaves aunque la respuesta tarde, y las pantallas de la sala van
+   * casi juntas porque apuntan al mismo instante. Con el pozo el margen es
+   * generoso: sin carrera, un golpe medio segundo corrido no le cuesta nada a
+   * nadie — lo que sí importa es que ninguna pantalla lo cante al revés.
    */
   var desfase = 0;
   var sincronizado = false;
@@ -504,20 +504,17 @@ var Audio_ = (function () {
   }
 
   /*
-   * Un aviso CORTO, para cuando arranca una ronda.
-   *
-   * 🔴 Existe por Google Meet: la reunión vive en OTRA PESTAÑA, así que cuando el
-   * anfitrión pide producción nadie está mirando el portal. Sin un aviso que se
-   * oiga, el asesor se entera del countdown cuando ya está por la mitad — o no se
-   * entera y pierde su propia venta, sin que en pantalla falle nada.
+   * Un aviso CORTO, para cuando arranca la llamada.
    *
    * ⚠️ Es deliberadamente distinto del festejo: dos notas secas de medio segundo,
-   * no la sirena. Si sonara parecido, la sala no distinguiría "empezó la ronda" de
-   * "destaparon a alguien" y el suspenso se arruina.
+   * no la sirena. Si sonara parecido, la sala no distinguiría "empieza la llamada"
+   * de "destaparon a alguien" y el suspenso se arruina.
    *
-   * ⚠️ Suena TAMBIÉN en los countdowns de teatro, y tiene que ser así: el teatro es
-   * indistinguible del real a propósito. Un aviso que solo sonara en los reales le
-   * contaría a toda la sala cuándo queda producción.
+   * ⚠️ Suena IGUAL con el pozo vacío, y tiene que ser así: una llamada que solo
+   * sonara cuando queda producción le contaría a toda la sala cuándo no queda.
+   *
+   * 🔴 Quién lo toca lo decide `Sala`, no este módulo: solo el ANFITRIÓN (ver
+   * `sonarSiAnfitrion`). Acá vive solo el sonido.
    */
   function sonidoAviso() {
     var c = contexto(); if (!c) return;
@@ -904,7 +901,7 @@ var Pozo = (function () {
 })();
 
 /* ══════════════════════════════════════════════════════════════════════════
-   Sala — el corazón: polling, countdown y festejo
+   Sala — el corazón: polling, llamada y festejo
    ══════════════════════════════════════════════════════════════════════════ */
 var Sala = (function () {
   var S = {
@@ -953,7 +950,13 @@ var Sala = (function () {
      */
     Pozo.refrescar();
     poll();
-    S.timerTick = setInterval(tick, 1000);
+    /*
+     * ⚠️ 250 ms y no 1 s. El tick solo trabaja durante la llamada (el resto del
+     * tiempo sale en la primera línea), y ahí cada golpe dura ~1,5 s: con un tick
+     * de un segundo, un golpe se quedaría en pantalla 1 o 2 s según en qué momento
+     * cayera, y la cuenta de la pantalla proyectada sonaría a tropiezos.
+     */
+    S.timerTick = setInterval(tick, 250);
   }
 
   function salir() {
@@ -1065,12 +1068,36 @@ var Sala = (function () {
 
   function hayShow(est) {
     var f = est && est.ronda && est.ronda.fase;
-    return f === 'countdown' || f === 'reveal';
+    return f === 'llamada' || f === 'reveal';
   }
 
   function cadencia() {
-    var fase = S.estado && S.estado.ronda && S.estado.ronda.fase;
-    return (fase === 'countdown' || fase === 'reveal') ? Cfg.POLL_ACTIVO_MS : Cfg.POLL_SALA_MS;
+    return hayShow(S.estado) ? Cfg.POLL_ACTIVO_MS : Cfg.POLL_SALA_MS;
+  }
+
+  /*
+   * ══════════════════════════════════════════════════════════════════════════
+   * 🔴 EL SONIDO AUTOMÁTICO SUENA SOLO EN LA MÁQUINA DEL ANFITRIÓN (sep 2026).
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * Antes sonaba en TODOS los navegadores con el portal abierto, cada uno cuando su
+   * propio sondeo se enteraba: en la oficina eran hasta 20 sirenas desfasadas 0 a 3
+   * segundos. El festejo es UN momento colectivo y así sonaba como una feria.
+   *
+   * Ahora suena en la pantalla que el anfitrión comparte en Meet, y de ahí les
+   * llega a todos — si comparte la PESTAÑA con «compartir audio» (ver el
+   * recordatorio en su bloque de Producción).
+   *
+   * 🔴 Se lee `S.estado.soyAnfitrion` EN EL MOMENTO, nunca un valor guardado. Se
+   * puede pasar a ser anfitrión a mitad de reunión (toma automática, desplazamiento,
+   * rescate del ausente): quien la acaba de tomar tiene que empezar a sonar, y quien
+   * la perdió, callarse.
+   *
+   * ⚠️ «Repetir sirena» NO pasa por acá: es un sonido que la persona PIDIÓ, y un
+   * botón que no hace nada para el 95 % de la sala es peor que un poco de ruido.
+   */
+  function sonarSiAnfitrion(sonar) {
+    if (S.estado && S.estado.soyAnfitrion) sonar();
   }
 
   function aplicar(r) {
@@ -1167,14 +1194,12 @@ var Sala = (function () {
      * El panel se abre solo, sí — pero en una pestaña que está de fondo, y lo único
      * que llega hasta la pestaña de al lado son el TÍTULO y el SONIDO.
      *
-     * Sin esto, el asesor se entera del countdown cuando ya está por la mitad, o no
-     * se entera y pierde su propia venta sin que en pantalla falle nada.
-     *
      * ⚠️ Va por TRANSICIÓN, como la apertura del panel: por estado sonaría en cada
      * sondeo, o sea cada 2 segundos durante toda la ronda.
      */
     if (showAntes !== hayShow(r)) {
-      if (hayShow(r)) { Pantalla.abrirPorRonda(); Audio_.aviso(); } else Pantalla.cerrarPorRonda();
+      if (hayShow(r)) { Pantalla.abrirPorRonda(); sonarSiAnfitrion(Audio_.aviso); }
+      else Pantalla.cerrarPorRonda();
       tituloSegunRonda(hayShow(r));
       /*
        * 🔴 El pozo se relee en la TRANSICIÓN de la ronda, no en cada sondeo.
@@ -1215,96 +1240,89 @@ var Sala = (function () {
     celebrar(ronda.itemActual);
   }
 
-  /* ── el tick local del reloj ───────────────────────────────────────── */
+  /* ── la llamada: «Preparando… ¡a la una! ¡a las dos! ¡a las tres!» ──── */
+
+  /*
+   * ══════════════════════════════════════════════════════════════════════════
+   * LA LLAMADA REEMPLAZA A LA CUENTA REGRESIVA (sep 2026).
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * La cuenta de 30 s y su antesala existían por una CARRERA: había que apretar
+   * dentro de la ventana. Con el pozo la producción se carga antes, así que no hay
+   * plazo que las pantallas tengan que compartir, y lo que queda es un remate.
+   *
+   * ⚠️ El golpe sale de lo que FALTA para `finTs`, como PROPORCIÓN de `llamadaMs`
+   * —no de lo transcurrido—. Quien se entera tarde entra en el golpe que
+   * corresponde en vez de arrancar de cero: es el problema que la antesala tapaba,
+   * resuelto sin ella. Y como es proporción, el preview puede acortar la llamada
+   * sin que se desarme.
+   */
+  var GOLPES = [
+    // hasta qué fracción de la llamada dura cada golpe
+    { hasta: 0.23, clave: 'prep', txt: 'Preparando…' },
+    { hasta: 0.46, clave: 'una',  txt: '¡A la una!' },
+    { hasta: 0.69, clave: 'dos',  txt: '¡A las dos!' },
+    { hasta: 1.01, clave: 'tres', txt: '¡A las tres!' }
+  ];
+
+  /*
+   * 🔴 La llamada nombra SOLO el orden: «la primera», «la segunda»… NUNCA el tipo
+   * (decisión del dueño, sep 2026). «Primera matrícula» mentiría cuando sale un
+   * abono; «primer abono» delataría que los abonos van siempre primero, y en dos
+   * reuniones la sala sabría cuándo empiezan las matrículas. El tipo lo dice la
+   * TARJETA, cuando ya no se puede desarmar.
+   */
+  var ORDINALES = ['PRIMERA', 'SEGUNDA', 'TERCERA', 'CUARTA', 'QUINTA',
+                   'SEXTA', 'SÉPTIMA', 'OCTAVA', 'NOVENA', 'DÉCIMA'];
+  function ordinalTxt(n) {
+    n = parseInt(n, 10) || 1;
+    return 'LA ' + (ORDINALES[n - 1] || (n + 'ª'));
+  }
+
+  function golpeDe(ronda) {
+    var total = ronda.llamadaMs || 6500;
+    var falta = Math.max(0, (ronda.finTs || 0) - Reloj.ahora());
+    var frac = Math.min(1, Math.max(0, 1 - falta / total));
+    for (var i = 0; i < GOLPES.length; i++) {
+      if (frac < GOLPES[i].hasta) return GOLPES[i];
+    }
+    return GOLPES[GOLPES.length - 1];
+  }
+
+  /** Pinta el golpe sobre el DOM que ya puso `renderLlamada`, sin repintar el bloque. */
+  function pintarLlamada(ronda) {
+    var caja = UI.id('llamada');
+    var golpe = UI.id('llamadaGolpe');
+    if (!caja || !golpe) return;
+    var g = golpeDe(ronda);
+    // Solo se toca el DOM cuando CAMBIA el golpe: la animación de entrada de cada
+    // golpe se reinicia al cambiar el atributo, y tocarlo en cada tick la cortaría.
+    if (caja.getAttribute('data-golpe') === g.clave) return;
+    caja.setAttribute('data-golpe', g.clave);
+    golpe.textContent = g.txt;
+  }
 
   function tick() {
     if (!S.estado || !S.estado.ronda) return;
     var ronda = S.estado.ronda;
-    if (ronda.fase !== 'countdown') return;
+    if (ronda.fase !== 'llamada') return;
+
+    pintarLlamada(ronda);
 
     /*
-     * 🔴 Durante la ANTESALA no se le pregunta nada al servidor.
+     * Terminó la llamada: el servidor ya puede destapar. Se pregunta enseguida en
+     * vez de esperar el próximo sondeo, o «¡a las tres!» queda colgado hasta 2 s
+     * antes de que aparezca la tarjeta.
      *
-     * Su cero no cambia de fase —la ronda ya está en `countdown` desde el anuncio—,
-     * así que un `pollYa` ahí sería un pedido por persona y por ronda que no aporta
-     * nada, justo en el momento en que toda la filial está mirando la misma pantalla.
+     * ⚠️ UNA sola vez por llamada. El tick corre varias veces por segundo y la fase
+     * no cambia hasta que el servidor conteste: sin recordar que ya se preguntó, se
+     * dispara una consulta por tick — y son los segundos en que TODA la sala está
+     * mirando la misma pantalla, o sea el peor momento para multiplicar los pedidos.
      */
-    if (actualizarReloj(ronda)) return;
-
-    var seg = Reloj.faltan(ronda.finTs);
-
-    /*
-     * Llegó a cero: el servidor ya cambió de fase. Se pregunta enseguida en vez
-     * de esperar el próximo sondeo, para que el destape no llegue tarde.
-     *
-     * ⚠️ UNA sola vez por countdown. El tick corre cada segundo y `seg` se queda
-     * en 0 hasta que el servidor conteste la fase nueva: sin recordar que ya se
-     * preguntó, se dispara una consulta por segundo mientras tanto — y son los
-     * segundos en que TODA la sala está mirando la misma pantalla, o sea el peor
-     * momento para multiplicar los pedidos.
-     */
-    if (seg === 0 && S.ceroPedido !== ronda.finTs) {
+    if (Reloj.ahora() >= ronda.finTs && S.ceroPedido !== ronda.finTs) {
       S.ceroPedido = ronda.finTs;
       pollYa();
     }
-  }
-
-  /**
-   * @param {number} seg   segundos a mostrar
-   * @param {number} [total] segundos que representa el anillo lleno. En la ANTESALA
-   *   va `null`: el anillo se deja entero y sin los colores de urgencia, porque ahí
-   *   no se está agotando nada — se está anunciando. Pintarlo como si corriera el
-   *   tiempo haría creer que ya hay que apurarse, y todavía no empezó.
-   */
-  function pintarReloj(seg, total) {
-    var num = UI.id('relojNum');
-    var barra = UI.id('relojBarra');
-    var caja = UI.id('reloj');
-    if (!num || !barra || !caja) return;
-
-    var anuncio = (total === null);
-    num.textContent = seg;
-    var tot = anuncio ? 1 : (total || Cfg.COUNTDOWN_MS / 1000);
-    var largo = 2 * Math.PI * 64;
-    barra.style.strokeDasharray = largo;
-    barra.style.strokeDashoffset = anuncio ? 0 : largo * (1 - Math.min(1, seg / tot));
-    caja.classList.toggle('antesala', anuncio);
-    caja.classList.toggle('urgente', !anuncio && seg <= 10 && seg > 5);
-    caja.classList.toggle('critico', !anuncio && seg <= 5);
-  }
-
-  /**
-   * Pinta el reloj según el momento, y devuelve si estamos en la ANTESALA.
-   *
-   * 🔴 La antesala existe porque la noticia de que empezó la ronda NO le llega a
-   * todos junta: medido contra producción, hasta ~9 s tarde. Como el reloj apunta a
-   * un instante absoluto, el que se enteraba tarde veía el conteo aparecer ya en 21
-   * — y si en cambio le diéramos 30 desde que se entera, apretaría creyendo que le
-   * quedan 5 segundos y el servidor le rechazaría la venta. Se anuncia antes y
-   * arranca para todos parejo.
-   */
-  function actualizarReloj(ronda) {
-    var ahora = Reloj.ahora();
-    var enAntesala = !!(ronda.inicioTs && ahora < ronda.inicioTs);
-    var txt = UI.id('relojTxt');
-
-    /*
-     * ⚠️ Acá se escondían los dos botones de producción durante el anuncio. Con el
-     * pozo (sep 2026) no hay botones en ningún momento del conteo: se carga antes
-     * y esto es puro suspenso.
-     */
-    if (txt) {
-      txt.textContent = enAntesala
-        ? '¡Atención! Viene producción'
-        : '¿Quién tiene producción?';
-    }
-
-    if (enAntesala) {
-      pintarReloj(Math.max(0, Math.ceil((ronda.inicioTs - ahora) / 1000)), null);
-    } else {
-      pintarReloj(Reloj.faltan(ronda.finTs));
-    }
-    return enAntesala;
   }
 
   /* ── render del panel lateral ──────────────────────────────────────── */
@@ -1315,9 +1333,9 @@ var Sala = (function () {
      * 🔴 CON RONDA EN CURSO, Producción ocupa el ANCHO COMPLETO.
      *
      * Fuera de la ronda el panel son tres tarjetas repartidas a lo ancho y no hay
-     * mucho que hacer —la reunión está en la otra pestaña—. Pero el countdown y
-     * los dos botones de "¡Tengo Matrícula!" son EL momento de esta pantalla, y
-     * en una columna de 400 px quedaban del mismo tamaño que un aviso cualquiera.
+     * mucho que hacer —la reunión está en la otra pestaña—. Pero la llamada y el
+     * destape son EL momento de esta pantalla, y en una columna de 400 px quedaban
+     * del mismo tamaño que un aviso cualquiera.
      *
      * ⚠️ Va por ESTADO y no por transición, al revés que `Pantalla.abrirPorRonda`:
      * ahí el motivo es que el usuario puede cerrar el panel a mano y el estado se
@@ -1338,9 +1356,9 @@ var Sala = (function () {
    * 🔴 No es una optimización: `render()` corre en cada respuesta del servidor
    * (cada 2 s durante la ronda). Repintando siempre, a quien está escribiendo su
    * contraseña para reclamar la sala se le borra el campo cada dos segundos y no
-   * llega a apretar el botón nunca — y el reloj perdería su animación en cada
-   * vuelta. La firma lleva solo lo que cambia la ESTRUCTURA; los segundos del
-   * countdown los actualiza `pintarReloj` sobre el DOM que ya está puesto.
+   * llega a apretar el botón nunca — y la llamada perdería su animación en cada
+   * vuelta. La firma lleva solo lo que cambia la ESTRUCTURA; los golpes de la
+   * llamada los alterna `pintarLlamada` sobre el DOM que ya está puesto.
    *
    * @return {boolean} true si repintó (hay que volver a enganchar los handlers)
    */
@@ -1379,13 +1397,13 @@ var Sala = (function () {
       titulo.textContent = S.enReunion ? 'Está en la reunión' : 'La reunión está abierta';
       /*
        * 🔴 Se le pide explícitamente que NO cierre esta pantalla, y hay que
-       * decirlo: la cuenta regresiva, los botones de producción y el conteo de
-       * asistencia viven acá, no en Meet. Quien cierre el portal creyendo que ya
+       * decirlo: la llamada de producción, el festejo y el conteo de asistencia
+       * viven acá, no en Meet. Quien cierre el portal creyendo que ya
        * está adentro de la reunión se queda sin asistencia y sin festejo, y nada
        * se lo avisa.
        */
       txt.textContent = S.enReunion
-        ? 'Deje esta pantalla abierta: acá salen la cuenta regresiva, los botones de producción y su asistencia.'
+        ? 'Deje esta pantalla abierta: acá se canta la producción y se registra su asistencia.'
         : 'Se abre en otra pestaña. Vuelva a esta pantalla para el festejo de producción.';
       /*
        * ⚠️ El botón queda aunque ya se haya entrado, y dice "Volver a la reunión":
@@ -1673,7 +1691,7 @@ var Sala = (function () {
       return;
     }
 
-    if (ronda.fase === 'countdown') { renderCountdown(ronda, cont, firma); return; }
+    if (ronda.fase === 'llamada') { renderLlamada(ronda, cont, firma); return; }
 
     if (ronda.fase === 'reveal') {
       pintarSi(cont, firma, '<div class="aviso aviso-ok">' +
@@ -1698,6 +1716,19 @@ var Sala = (function () {
        */
       html += '<button class="btn btn-verde btn-grande btn-bloque" id="btnPedir">' +
         '<span class="material-symbols-rounded">campaign</span> Pedir producción</button>';
+      /*
+       * 🔴 EL RECORDATORIO DEL AUDIO, porque sin él el fallo es mudo.
+       *
+       * El sonido del festejo suena SOLO en esta máquina (sonarSiAnfitrion), y les
+       * llega a los demás por Meet únicamente si comparte la PESTAÑA con «También
+       * compartir el audio» — o toda la pantalla con audio del sistema, que en Mac
+       * no existe. Compartiendo una VENTANA nunca viaja audio. Si no lo sabe, nadie
+       * oye nada y no hay ningún error que le avise.
+       */
+      html += '<p class="aviso-audio" id="avisoAudio">' +
+        '<span class="material-symbols-rounded">volume_up</span>' +
+        '<span>El sonido sale de <strong>esta pantalla</strong>. En Meet, comparta ' +
+        '<strong>esta pestaña</strong> y tilde «También compartir el audio».</span></p>';
     }
     /*
      * 🔴 EL POZO, para todos. Acá abajo va lo que cada uno tiene cargado y el
@@ -1729,35 +1760,31 @@ var Sala = (function () {
   }
 
   /**
-   * 🔴 EL CONTEO NO TIENE NADA QUE APRETAR, y ese es el cambio entero (sep 2026).
+   * 🔴 LA LLAMADA NO TIENE NADA QUE APRETAR, y ese es el cambio entero (sep 2026).
    *
-   * Hasta acá los dos botones de producción vivían ACÁ ADENTRO: había que
+   * Hasta el pozo los dos botones de producción vivían acá adentro: había que
    * apretarlos dentro de los 30 segundos, así que quien tenía internet lento
-   * perdía su venta por medio segundo — delante de toda la filial y sin forma de
-   * reclamar. Con el pozo se carga antes y el conteo pasó a ser puro suspenso.
+   * perdía su venta por medio segundo — delante de toda la filial. Ahora se carga
+   * antes y esto es un remate: «la primera… ¡a la una! ¡a las dos! ¡a las tres!».
    *
-   * ⚠️ Se ve EXACTAMENTE IGUAL haya producción o no. Si el conteo solo apareciera
-   * cuando queda algo, la filial aprendería a leerlo en dos reuniones y se acabó:
-   * bastaría con mirar si arranca el reloj para saber si hay más.
+   * ⚠️ Se ve EXACTAMENTE IGUAL haya producción o no: si la llamada solo apareciera
+   * cuando queda algo, la filial aprendería a leerla en dos reuniones.
+   *
+   * ⚠️ El número de orden va en el HTML (cambia por ronda, y `rondaId` está en la
+   * firma); el golpe lo alterna `pintarLlamada` sobre el DOM ya puesto, porque
+   * cambia por RELOJ y `pintarSi` no se enteraría.
    */
-  function renderCountdown(ronda, cont, firma) {
+  function renderLlamada(ronda, cont, firma) {
     var html =
-      '<div class="countdown">' +
-        '<div class="reloj" id="reloj">' +
-          '<svg viewBox="0 0 144 144">' +
-            '<circle class="pista" cx="72" cy="72" r="64"></circle>' +
-            '<circle class="barra" id="relojBarra" cx="72" cy="72" r="64"></circle>' +
-          '</svg>' +
-          '<div class="num" id="relojNum">–</div>' +
-        '</div>' +
-        // El texto lleva id porque lo alterna `actualizarReloj` cada segundo: la
-        // antesala termina por RELOJ, no por una respuesta del servidor, así que
-        // `pintarSi` no se enteraría de esa transición.
-        '<p class="countdown-txt" id="relojTxt">¿Quién tiene producción?</p>' +
+      '<div class="llamada" id="llamada" data-golpe="">' +
+        '<p class="llamada-orden" id="llamadaOrden">' + UI.esc(ordinalTxt(ronda.ordinal)) + '</p>' +
+        '<p class="llamada-golpe" id="llamadaGolpe" aria-live="assertive">Preparando…</p>' +
+        // Tres marcas que se prenden con cada golpe: se lee desde el fondo de la sala.
+        '<div class="llamada-marcas" aria-hidden="true"><span></span><span></span><span></span></div>' +
       '</div>';
 
     pintarSi(cont, firma, html);
-    actualizarReloj(ronda);
+    pintarLlamada(ronda);
   }
 
   function renderAsistencia() {
@@ -1967,11 +1994,11 @@ var Sala = (function () {
       /*
        * Dice lo que VA A PASAR, no lo que el programa está haciendo por dentro.
        * Antes decía "Sincronizando sala…", que es vocabulario nuestro y no le
-       * anticipa al anfitrión que lo próximo es el anuncio y después el conteo.
-       * Con la antesala eso importa más: entre su clic y el reloj hay unos
-       * segundos, y el botón es lo único que mira mientras tanto.
+       * anticipa al anfitrión que lo próximo es la llamada. Entre su clic y la
+       * respuesta de Apps Script pasan unos segundos, y el botón es lo único que
+       * mira mientras tanto.
        */
-      boton.innerHTML = '<span class="material-symbols-rounded girando">sync</span> Preparando el conteo…';
+      boton.innerHTML = '<span class="material-symbols-rounded girando">sync</span> Preparando…';
     }
 
     var restaurar = function () {
@@ -1982,7 +2009,7 @@ var Sala = (function () {
 
     /*
      * Si salió bien NO se restaura: la ronda arranca y el repintado reemplaza este
-     * botón por el countdown. Restaurarlo acá haría parpadear "Pedir producción"
+     * botón por la llamada. Restaurarlo acá haría parpadear "Pedir producción"
      * entre medio, que es justo la duda que veníamos a sacar.
      *
      * ⚠️ Pero el repintado solo ocurre si el estado CAMBIA (`pintarSi` compara una
@@ -2007,16 +2034,16 @@ var Sala = (function () {
 
   /*
    * ══════════════════════════════════════════════════════════════════════════
-   * 🔴 Volver a la pestaña: repintar el reloj YA, sin esperar el próximo tick.
+   * 🔴 Volver a la pestaña: repintar la llamada YA, sin esperar el próximo tick.
    * ══════════════════════════════════════════════════════════════════════════
    *
    * Chromium FRENA las pestañas que no están adelante: al minuto baja los
    * temporizadores a uno por segundo y, tras unos minutos de fondo, a uno por
-   * MINUTO. El reloj del portal es un `setInterval` de 1 s, así que en una pestaña
-   * de fondo —o en un celular con la pantalla apagada— el número SE CONGELA.
+   * MINUTO. El tick de la llamada es un `setInterval`, así que en una pestaña de
+   * fondo —o en un celular con la pantalla apagada— el golpe SE CONGELA.
    *
    * Lo caro no es que se congele mientras nadie mira: es que al VOLVER puede
-   * quedarse mostrando un número viejo hasta un minuto, y el sondeo también está
+   * quedarse mostrando un golpe viejo hasta un minuto, y el sondeo también está
    * frenado, así que la persona vuelve al festejo y ve una pantalla que miente.
    * El síntoma que reportó el dueño: 'se quedó clavado y después pegó un salto'.
    *
@@ -2025,8 +2052,8 @@ var Sala = (function () {
    */
   function alVolverAlFrente() {
     if (!S.sala) return;
-    if (S.estado && S.estado.ronda && S.estado.ronda.fase === 'countdown') {
-      actualizarReloj(S.estado.ronda);
+    if (S.estado && S.estado.ronda && S.estado.ronda.fase === 'llamada') {
+      pintarLlamada(S.estado.ronda);
     }
     pollYa();
   }
@@ -2127,7 +2154,9 @@ var Sala = (function () {
     UI.mostrar(UI.id('celDetalle'), !!det);
     UI.id('celCaja').style.setProperty('--acento-cel', esMat ? 'var(--ambar)' : 'var(--verde)');
     UI.mostrar(ov, true);
-    Audio_.tocar(item.tipo);
+    // Solo en la máquina del anfitrión: de ahí viaja por Meet (ver sonarSiAnfitrion).
+    // El confeti sí sale en todas: es de la pantalla de cada uno, no del parlante.
+    sonarSiAnfitrion(function () { Audio_.tocar(item.tipo); });
     Confeti.tirar(item.tipo);
     S.ultimoItem = item;
   }
