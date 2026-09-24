@@ -719,6 +719,190 @@ var UI = (function () {
 })();
 
 
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Pozo — lo que cada uno deja cargado para que se cante en la reunión
+   ══════════════════════════════════════════════════════════════════════════
+
+   🔴 Existe para matar la carrera contra el reloj. Hasta sep 2026 había que
+   apretar "¡Tengo Matrícula!" DENTRO de los 30 segundos del conteo: quien tenía
+   internet lento perdía su venta por medio segundo, delante de toda la filial y
+   sin forma de reclamar.
+
+   Ahora se carga antes —tranquilo, desde el celular, cuando se quiera— y el
+   anfitrión saca una por pulsación.
+
+   ⚠️ Las reglas que DECIDEN viven en el servidor: que el lead esté en MATRICULA o
+   ABONO, que no se cargue lo mismo dos veces, y que el detalle salga de la
+   planilla del CRM. Acá solo se pide y se muestra.
+   ══════════════════════════════════════════════════════════════════════════ */
+var Pozo = (function () {
+  var P = { pendientes: [], destapadas: [], abierto: false, enviando: false, recientes: null };
+
+  function cuantas() { return P.pendientes.length; }
+
+  function aplicar(pozo) {
+    if (!pozo) return;
+    P.pendientes = pozo.pendientes || [];
+    P.destapadas = pozo.destapadas || [];
+    if (P.abierto) pintar();
+    Sala.repintarFestejo();
+  }
+
+  /** Refresca desde el servidor. Se llama al entrar a una sala y tras cada cambio. */
+  function refrescar() {
+    return API.get({ accion: 'pozoMio', token: Sesion.token })
+      .then(function (r) { if (r && r.ok) aplicar(r.pozo); })
+      .catch(function () { /* el pozo no puede tirar abajo la sala */ });
+  }
+
+  /*
+   * ⚠️ Las del CRM se piden al ABRIR, no en cada sondeo: es una lectura de otra
+   * planilla —la del CRM— y solo hace falta cuando la persona va a cargar. En el
+   * sondeo serían decenas de lecturas por minuto de una hoja ajena.
+   */
+  function pedirRecientes() {
+    P.recientes = null;
+    if (P.abierto) pintar();
+    return API.get({ accion: 'pozoRecientes', token: Sesion.token })
+      .then(function (r) { P.recientes = (r && r.ok) ? (r.items || []) : []; })
+      .catch(function () { P.recientes = []; })
+      .then(function () { if (P.abierto) pintar(); });
+  }
+
+  function abrir() { P.abierto = true; UI.mostrar(UI.id('pozoModal'), true); pintar(); pedirRecientes(); }
+  function cerrar() { P.abierto = false; UI.mostrar(UI.id('pozoModal'), false); }
+
+  function chip(tipo) {
+    return '<span class="chip ' + (tipo === 'matricula' ? 'chip-ambar' : 'chip-verde') + '">' +
+      (tipo === 'matricula' ? 'Matrícula' : 'Abono') + '</span>';
+  }
+
+  function pintar() {
+    var c = UI.id('pozoCuerpo');
+    if (!c) return;
+    var html = '<h4>Esperando turno</h4>';
+
+    html += P.pendientes.length
+      ? P.pendientes.map(function (it) {
+          return '<div class="pozo-fila">' + chip(it.tipo) +
+            '<span class="pozo-quien">' + UI.esc(it.alumno || '(sin nombre del usuario)') +
+              (it.ciudad ? ' · ' + UI.esc(it.ciudad) : '') + '</span>' +
+            '<span class="pozo-tel">' + UI.esc(it.telefono || '') + '</span>' +
+            '<button class="btn" data-quitar="' + UI.esc(it.id) + '" title="Sacar del pozo">' +
+              '<span class="material-symbols-rounded">cancel</span></button>' +
+          '</div>';
+        }).join('')
+      : '<p class="pozo-vacio">Nada cargado todavía.</p>';
+
+    if (P.destapadas.length) {
+      html += '<h4>Ya se cantó hoy</h4>' + P.destapadas.map(function (it) {
+        return '<div class="pozo-fila pozo-hecha">' +
+          '<span class="material-symbols-rounded">check_circle</span>' +
+          '<span class="pozo-quien">' + UI.esc(it.alumno || '(sin nombre del usuario)') + '</span></div>';
+      }).join('');
+    }
+
+    /*
+     * ⚠️ Las del CRM se OFRECEN, no se cargan solas. Cargarlas automáticamente
+     * pondría en el festejo algo que la persona no pidió — y una venta caída o mal
+     * registrada saldría proyectada igual, delante de toda la filial.
+     */
+    html += '<h4>Sus matrículas de las últimas 48 h</h4>';
+    if (P.recientes === null) html += '<p class="pozo-vacio">Buscando en el CRM…</p>';
+    else if (!P.recientes.length) html += '<p class="pozo-vacio">No hay ninguna sin cargar.</p>';
+    else html += P.recientes.map(function (it) {
+      return '<div class="pozo-fila">' + chip(it.tipo) +
+        '<span class="pozo-quien">' + UI.esc(it.alumno || it.titular || '(sin nombre)') +
+          (it.ciudad ? ' · ' + UI.esc(it.ciudad) : '') + '</span>' +
+        '<span class="pozo-tel">' + UI.esc(it.telefonoCorto || '') + '</span>' +
+        '<button class="btn btn-primario" data-toque="' + UI.esc(it.telefono) + '"' +
+          ' data-tipo="' + UI.esc(it.tipo) + '">Cargar</button>' +
+      '</div>';
+    }).join('');
+
+    c.innerHTML = html;
+    Array.prototype.forEach.call(c.querySelectorAll('[data-quitar]'), function (b) {
+      b.onclick = function () { quitar(b.getAttribute('data-quitar'), b); };
+    });
+    Array.prototype.forEach.call(c.querySelectorAll('[data-toque]'), function (b) {
+      b.onclick = function () {
+        cargar({ tipo: b.getAttribute('data-tipo'), telefono: b.getAttribute('data-toque') }, b);
+      };
+    });
+  }
+
+  /*
+   * 🔴 Cargar ESCRIBE, así que no se reintenta sola (ver POST_REPETIBLE) — y por
+   * eso mismo el doble clic se frena acá: dos POST salen antes de que vuelva el
+   * primero, y esa persona quedaría ocupando dos turnos del festejo mientras el
+   * resto de la sala espera sin entender por qué.
+   */
+  function cargar(datos, boton) {
+    if (P.enviando) return Promise.resolve();
+    P.enviando = true;
+    if (boton) boton.disabled = true;
+    return API.post({
+      accion: 'pozoCargar', token: Sesion.token,
+      tipo: datos.tipo, telefono: datos.telefono,
+      alumno: datos.alumno || '', ciudad: datos.ciudad || ''
+    }).then(function (r) {
+      /*
+       * ⚠️ El rechazo dura 7 s, no los 3,8 de siempre: acá el servidor explica QUÉ
+       * hacer —"ese lead está en EN SEGUIMIENTO, se cambia en el CRM"— y un aviso
+       * que se va antes de que lo lean no avisó nada.
+       */
+      if (!r || !r.ok) { UI.toast((r && r.message) || 'No se pudo cargar.', 'error', 7000); return; }
+      UI.toast('Cargada. Se canta cuando el anfitrión pida producción.', 'ok');
+      if (r.aviso) UI.toast(r.aviso, 'info', 6000);
+      aplicar(r.pozo);
+      pedirRecientes();
+    }).catch(function (e) {
+      UI.toast(e.message || 'Error de conexión.', 'error');
+    }).then(function () {
+      P.enviando = false;
+      if (boton) boton.disabled = false;
+    });
+  }
+
+  function quitar(id, boton) {
+    if (P.enviando) return;
+    P.enviando = true;
+    if (boton) boton.disabled = true;
+    API.post({ accion: 'pozoQuitar', token: Sesion.token, id: id })
+      .then(function (r) {
+        if (!r || !r.ok) { UI.toast((r && r.message) || 'No se pudo quitar.', 'error'); return; }
+        aplicar(r.pozo);
+        pedirRecientes();
+      })
+      .catch(function (e) { UI.toast(e.message || 'Error de conexión.', 'error'); })
+      .then(function () { P.enviando = false; if (boton) boton.disabled = false; });
+  }
+
+  /** Lo cargado a mano: para quien todavía no llenó el formulario de matrícula. */
+  function cargarDelForm() {
+    var tipo = UI.$('input[name="pozoTipo"]:checked');
+    cargar({
+      tipo: tipo ? tipo.value : '',
+      telefono: UI.id('pozoTel').value,
+      alumno: UI.id('pozoAlumno').value,
+      ciudad: UI.id('pozoCiudad').value
+    }, UI.id('btnPozoGuardar')).then(function () {
+      UI.id('pozoTel').value = '';
+      UI.id('pozoAlumno').value = '';
+      UI.id('pozoCiudad').value = '';
+    });
+  }
+
+  return {
+    abrir: abrir, cerrar: cerrar, cuantas: cuantas,
+    refrescar: refrescar, cargarDelForm: cargarDelForm,
+    /* ⚠️ Al salir de la sala se limpia: el pozo es de la PERSONA, pero la pantalla
+       no puede quedar mostrando lo de la sesión anterior tras cerrar sesión. */
+    limpiar: function () { P.pendientes = []; P.destapadas = []; P.recientes = null; cerrar(); }
+  };
+})();
+
 /* ══════════════════════════════════════════════════════════════════════════
    Sala — el corazón: polling, countdown y festejo
    ══════════════════════════════════════════════════════════════════════════ */
@@ -726,7 +910,6 @@ var Sala = (function () {
   var S = {
     sala: null,          // {id, nombre, ...}
     estado: null,        // última respuesta de estadoSala
-    registreEn: null,    // rondaId donde YO anoté (memoria local de esta pestaña)
     ultimoDestape: null, // rondaId:revelados ya festejado, para no repetirlo en cada poll
     timerPoll: null,
     timerTick: null,
@@ -751,7 +934,6 @@ var Sala = (function () {
     // el título de la sala ANTERIOR unos segundos, que es peor que no decir nada.
     UI.id('salaTitulo').textContent = 'Cargando…';
     UI.id('salaManager').textContent = '';
-    S.registreEn = null;
     S.ultimoDestape = null;
     // ⚠️ La asistencia se cuenta POR SALA. Sin este reset, quien pasa de una sala
     // a otra arrastra el "ya validada" de la anterior y su asistencia a la segunda
@@ -764,6 +946,12 @@ var Sala = (function () {
     S.ceroPedido = null;
     // "Ya se decidió algo sobre esta sala en esta visita". Ver `autoTomarSala`.
     S.autoTomaResuelta = false;
+    /*
+     * ⚠️ El pozo se pide UNA vez al entrar, no en cada sondeo: es una lectura de
+     * hoja y el contenido solo cambia cuando esta persona carga o quita algo —o
+     * cuando el anfitrión destapa, que ya trae su propio repintado.
+     */
+    Pozo.refrescar();
     poll();
     S.timerTick = setInterval(tick, 1000);
   }
@@ -776,6 +964,7 @@ var Sala = (function () {
     // ⚠️ Y el título vuelve a lo que era: si no, quien sale en mitad de una ronda
     // se queda con la pestaña gritando "¡PRODUCCIÓN!" para siempre.
     tituloSegunRonda(false);
+    Pozo.limpiar();
     clearTimeout(S.timerPoll); clearInterval(S.timerTick); clearInterval(S.timerAsis);
     S.timerPoll = S.timerTick = S.timerAsis = null;
     S.enReunion = false;
@@ -987,6 +1176,23 @@ var Sala = (function () {
     if (showAntes !== hayShow(r)) {
       if (hayShow(r)) { Pantalla.abrirPorRonda(); Audio_.aviso(); } else Pantalla.cerrarPorRonda();
       tituloSegunRonda(hayShow(r));
+      /*
+       * 🔴 El pozo se relee en la TRANSICIÓN de la ronda, no en cada sondeo.
+       *
+       * Leerlo por sondeo sería una lectura de hoja por persona cada 2-3,5 s, y
+       * `estadoSala` está escrito para no tocar Sheets ni una vez — con la filial
+       * adentro son decenas por minuto contra las 30 ejecuciones simultáneas que
+       * Apps Script le da a todo el proyecto.
+       *
+       * La transición es justo el momento en que el dato importa: al terminar la
+       * vuelta, lo que se cantó tiene que salir de "esperando turno" en la pantalla
+       * de su dueño, aunque el destape lo haya disparado otro.
+       *
+       * ⚠️ Límite conocido: si la misma persona carga desde el celular, la
+       * computadora se entera recién en la ronda siguiente. Es cosmético —el
+       * contador— y cargar dos veces lo rechaza el servidor con un mensaje claro.
+       */
+      Pozo.refrescar();
     }
 
     detectarDestape(r.ronda);
@@ -1081,16 +1287,17 @@ var Sala = (function () {
     var ahora = Reloj.ahora();
     var enAntesala = !!(ronda.inicioTs && ahora < ronda.inicioTs);
     var txt = UI.id('relojTxt');
-    var bots = UI.id('botonesProd');
 
+    /*
+     * ⚠️ Acá se escondían los dos botones de producción durante el anuncio. Con el
+     * pozo (sep 2026) no hay botones en ningún momento del conteo: se carga antes
+     * y esto es puro suspenso.
+     */
     if (txt) {
       txt.textContent = enAntesala
         ? '¡Atención! Viene producción'
-        : (esperaTextoCountdown(ronda));
+        : '¿Quién tiene producción?';
     }
-    // Los botones no se muestran en el anuncio: todavía no hay nada que anotar, y
-    // un botón que se puede apretar antes de tiempo es una promesa a medias.
-    if (bots) UI.mostrar(bots, !enAntesala);
 
     if (enAntesala) {
       pintarReloj(Math.max(0, Math.ceil((ronda.inicioTs - ahora) / 1000)), null);
@@ -1098,11 +1305,6 @@ var Sala = (function () {
       pintarReloj(Reloj.faltan(ronda.finTs));
     }
     return enAntesala;
-  }
-
-  function esperaTextoCountdown(ronda) {
-    return (!!ronda.yaRegistre || S.registreEn === ronda.rondaId)
-      ? 'Producción anotada.' : '¿Producción para festejar?';
   }
 
   /* ── render del panel lateral ──────────────────────────────────────── */
@@ -1442,16 +1644,32 @@ var Sala = (function () {
     var ronda = r.ronda || {};
     var firma = [
       r.sala.abierta, ronda.fase, ronda.rondaId, r.soyAnfitrion,
-      // ⚠️ Va el "ya anotó" COMPLETO —el del servidor incluido—, no solo la memoria
-      // de esta pestaña. Si la firma mirara únicamente `S.registreEn`, anotar desde
-      // el celular no repintaría la computadora: el estado cambia y el bloque no se
-      // entera, que es la trampa que `pintarSi` tiene siempre a mano.
-      !!ronda.yaRegistre || S.registreEn === ronda.rondaId
+      /*
+       * 🔴 CUÁNTAS TIENE CARGADAS VA EN LA FIRMA, y sin eso el pozo no se ve.
+       *
+       * `pintarSi` compara esta firma y no repinta si es igual. Cargar una
+       * producción no cambia NADA del estado de la sala —misma fase, misma ronda—,
+       * así que sin este campo la persona carga, el servidor la guarda bien, y el
+       * panel sigue diciendo "No tiene producción cargada" hasta que arranque una
+       * ronda. Es la misma trampa que ya se había pisado con "ya anoté".
+       */
+      Pozo.cuantas()
     ].join('|');
 
+    /*
+     * 🔴 CON LA SALA CERRADA IGUAL SE PUEDE CARGAR, y esto es el punto del pozo.
+     *
+     * Antes este bloque cortaba acá con "el festejo se habilita cuando la sala esté
+     * abierta" — correcto cuando lo único que había eran los botones del conteo.
+     * Pero el pozo existe para cargar ANTES de la reunión: si el botón solo
+     * apareciera con la sala abierta, habría que esperar a que el anfitrión llegue
+     * para poder cargar, que es exactamente la prisa que esto vino a sacar.
+     */
     if (!r.sala.abierta) {
-      pintarSi(cont, firma, '<p style="font-size:13px;color:var(--txt-dim)">' +
-        'El festejo se habilita cuando la sala esté abierta.</p>');
+      pintarSi(cont, firma, '<p style="font-size:13px;color:var(--txt-dim);margin-bottom:10px">' +
+        'El festejo empieza cuando el anfitrión abra la sala. Mientras tanto puede dejar ' +
+        'su producción cargada.</p>' + pozoHtml());
+      if (UI.id('btnCargarProd')) UI.id('btnCargarProd').onclick = Pozo.abrir;
       return;
     }
 
@@ -1473,52 +1691,56 @@ var Sala = (function () {
         '<span><strong>¡No hay más producción!</strong><br>¡Gran reunión, equipo! 🎉</span></div>';
     }
     if (r.soyAnfitrion) {
+      /*
+       * ⚠️ El botón dice SIEMPRE "Pedir producción", nunca "Siguiente" —ni siquiera
+       * cuando ya hubo destapes—. Un "siguiente" delataría que queda otra, que es
+       * justo lo único que el teatro está cuidando (decisión 07 del plan).
+       */
       html += '<button class="btn btn-verde btn-grande btn-bloque" id="btnPedir">' +
-        '<span class="material-symbols-rounded">campaign</span> ' +
-        (cerro ? 'Nueva ronda' : 'Pedir producción') + '</button>';
-    } else if (!cerro) {
-      html += '<p style="font-size:13px;color:var(--txt-dim)">' +
-        'Esperando a que el anfitrión pida producción.</p>';
+        '<span class="material-symbols-rounded">campaign</span> Pedir producción</button>';
     }
+    /*
+     * 🔴 EL POZO, para todos. Acá abajo va lo que cada uno tiene cargado y el
+     * botón para cargar más.
+     *
+     * Antes esto no existía: había que apretar DENTRO de los 30 segundos del
+     * conteo, y quien tenía internet lento perdía su venta delante de toda la
+     * filial. Ahora se carga antes, tranquilo, y el conteo es puro suspenso.
+     */
+    html += pozoHtml();
     if (!pintarSi(cont, firma, html)) return;
     // Se le pasa el BOTÓN, no el evento: pedirProduccion lo deshabilita y le cambia
     // el texto mientras la petición viaja.
     if (UI.id('btnPedir')) UI.id('btnPedir').onclick = function () { pedirProduccion(this); };
+    if (UI.id('btnCargarProd')) UI.id('btnCargarProd').onclick = Pozo.abrir;
+  }
+
+  /** Lo que esta persona tiene esperando su turno, y el botón para cargar más. */
+  function pozoHtml() {
+    var n = Pozo.cuantas();
+    return '<div class="pozo-mini">' +
+      (n
+        ? '<span class="chip chip-verde"><span class="material-symbols-rounded">savings</span> ' +
+          n + (n === 1 ? ' esperando turno' : ' esperando turno') + '</span>'
+        : '<span style="font-size:13px;color:var(--txt-dim)">No tiene producción cargada.</span>') +
+      '<button class="btn btn-bloque" id="btnCargarProd" style="margin-top:10px">' +
+        '<span class="material-symbols-rounded">add_circle</span> Cargar producción</button>' +
+    '</div>';
   }
 
   /**
-   * 🔴 El countdown se ve EXACTAMENTE IGUAL sea el real o el de teatro, y los
-   * botones se muestran en los dos.
+   * 🔴 EL CONTEO NO TIENE NADA QUE APRETAR, y ese es el cambio entero (sep 2026).
    *
-   * Si en el de teatro los botones desaparecieran, toda la sala sabría al
-   * instante que ya no queda nada por anotar y el suspenso —que es el punto
-   * entero del festejo— se cae en el primer segundo.
+   * Hasta acá los dos botones de producción vivían ACÁ ADENTRO: había que
+   * apretarlos dentro de los 30 segundos, así que quien tenía internet lento
+   * perdía su venta por medio segundo — delante de toda la filial y sin forma de
+   * reclamar. Con el pozo se carga antes y el conteo pasó a ser puro suspenso.
    *
-   * Y no se le miente a nadie: si alguien aprieta durante el teatro, el servidor
-   * rechaza y esa persona ve un mensaje claro, en privado. Se entera quien
-   * apretó, no la sala. Lo único inaceptable sería aceptarle el clic sin
-   * registrar nada: creería que su venta quedó anotada.
+   * ⚠️ Se ve EXACTAMENTE IGUAL haya producción o no. Si el conteo solo apareciera
+   * cuando queda algo, la filial aprendería a leerlo en dos reuniones y se acabó:
+   * bastaría con mirar si arranca el reloj para saber si hay más.
    */
   function renderCountdown(ronda, cont, firma) {
-    /*
-     * 🔴 Manda el SERVIDOR, no la memoria de esta pestaña.
-     *
-     * `S.registreEn` vive en la pestaña, así que se perdía al recargar la página —
-     * y con eso volvían los dos botones como si no hubiera anotado nada. La persona
-     * apretaba de nuevo y se comía un cartel rojo ("Ya registró su producción en
-     * esta ronda") en pleno festejo, habiendo hecho todo bien. Lo mismo le pasaba a
-     * quien además está mirando desde el celular.
-     *
-     * La venta nunca corrió peligro —`registrarProduccion_` rechaza el duplicado—,
-     * pero el portal la trataba como si se hubiera equivocado.
-     *
-     * ⚠️ `yaRegistre` es sobre UNO MISMO y nada más. No confundir con el viejo
-     * `puedoRegistrar`, que llevaba adentro si la cola seguía abierta: atarle el
-     * botón habría apagado los de TODA la sala en los countdowns de teatro y ahí se
-     * cae el suspenso entero. Ver el comentario en `rondaPublica_`.
-     */
-    var yaAnote = !!ronda.yaRegistre || S.registreEn === ronda.rondaId;
-
     var html =
       '<div class="countdown">' +
         '<div class="reloj" id="reloj">' +
@@ -1528,29 +1750,13 @@ var Sala = (function () {
           '</svg>' +
           '<div class="num" id="relojNum">–</div>' +
         '</div>' +
-        // El texto y los botones llevan id porque los alterna `actualizarReloj` cada
-        // segundo: la antesala termina por RELOJ, no por una respuesta del servidor,
-        // así que `pintarSi` no se enteraría de esa transición.
-        '<p class="countdown-txt" id="relojTxt">' +
-          (yaAnote ? 'Producción anotada.' : '¿Producción para festejar?') +
-        '</p>' +
+        // El texto lleva id porque lo alterna `actualizarReloj` cada segundo: la
+        // antesala termina por RELOJ, no por una respuesta del servidor, así que
+        // `pintarSi` no se enteraría de esa transición.
+        '<p class="countdown-txt" id="relojTxt">¿Quién tiene producción?</p>' +
       '</div>';
 
-    html += yaAnote
-      ? '<div class="ya-registre"><span class="material-symbols-rounded">check_circle</span>' +
-        'Nadie más la ve hasta el destape.</div>'
-      : '<div class="botones-produccion" id="botonesProd">' +
-          '<button class="btn-produccion btn-matricula" data-tipo="matricula">' +
-            '<span class="material-symbols-rounded">workspace_premium</span> ¡Tengo Matrícula!</button>' +
-          '<button class="btn-produccion btn-abono" data-tipo="abono">' +
-            '<span class="material-symbols-rounded">savings</span> ¡Tengo Abono!</button>' +
-        '</div>';
-
-    if (pintarSi(cont, firma, html)) {
-      Array.prototype.forEach.call(cont.querySelectorAll('.btn-produccion'), function (b) {
-        b.onclick = function () { anotar(b.getAttribute('data-tipo'), b); };
-      });
-    }
+    pintarSi(cont, firma, html);
     actualizarReloj(ronda);
   }
 
@@ -1792,16 +1998,12 @@ var Sala = (function () {
       });
   }
 
-  function anotar(tipo, boton) {
-    if (boton) boton.disabled = true;
-    var rondaId = S.estado && S.estado.ronda ? S.estado.ronda.rondaId : null;
-    accion({ accion: 'registrarProduccion', token: Sesion.token, salaId: S.sala.id, tipo: tipo },
-      function () {
-        S.registreEn = rondaId;
-        UI.toast('Anotada. Se destapa cuando termine el conteo.', 'ok');
-      }
-    ).then(function () { if (boton) boton.disabled = false; });
-  }
+  /*
+   * ⚠️ Acá vivía `anotar`, que mandaba `registrarProduccion` desde el countdown.
+   * Se fue con el pozo (sep 2026): ahora se carga ANTES, con el teléfono del lead,
+   * y eso lo maneja el módulo `Pozo`. El backend responde 'obsoleto' a la acción
+   * vieja, con un mensaje que dice qué hacer.
+   */
 
   /*
    * ══════════════════════════════════════════════════════════════════════════
@@ -1912,6 +2114,17 @@ var Sala = (function () {
     UI.id('celTipo').textContent = esMat ? 'MATRÍCULA' : 'ABONO';
     UI.id('celNombre').textContent = item.ejecutivo || '';
     UI.id('celCargo').textContent = item.cargo || '';
+
+    /*
+     * El detalle de la matrícula: el usuario y de dónde es (decisión 06 del plan).
+     *
+     * ⚠️ Se esconde entero si no vino nada. Vacío es honesto —el plan rápido del
+     * CRM no pide los datos del estudiante— pero una línea en blanco proyectada se
+     * lee como que el portal perdió el dato.
+     */
+    var det = [item.alumno, item.ciudad].filter(function (x) { return !!x; }).join(' · ');
+    UI.id('celDetalle').textContent = det;
+    UI.mostrar(UI.id('celDetalle'), !!det);
     UI.id('celCaja').style.setProperty('--acento-cel', esMat ? 'var(--ambar)' : 'var(--verde)');
     UI.mostrar(ov, true);
     Audio_.tocar(item.tipo);
@@ -1933,6 +2146,13 @@ var Sala = (function () {
     hayRonda: function () { return hayShow(S.estado); },
     alVolverAlFrente: alVolverAlFrente,
     alEntrarAReunion: alEntrarAReunion,
+    /*
+     * ⚠️ El Pozo lo llama al cargar o quitar: el contador del panel ("2 esperando
+     * turno") cambia sin que cambie nada del estado de la sala, así que el sondeo
+     * NO lo repintaría — `pintarSi` compara una firma y esa firma no lo incluye.
+     * Sin esto, la persona carga y el panel sigue diciendo que no tiene nada.
+     */
+    repintarFestejo: function () { if (S.estado) renderFestejo(); },
     cerrarCelebracion: cerrarCelebracion,
     repetirSirena: repetirSirena
   };
@@ -2901,6 +3121,8 @@ var App = (function () {
     UI.id('loginForm').addEventListener('submit', login);
     UI.id('btnSalir').addEventListener('click', salir);
     UI.id('btnTema').addEventListener('click', Tema.alternar);
+    UI.id('btnPozoCerrar').addEventListener('click', Pozo.cerrar);
+    UI.id('btnPozoGuardar').addEventListener('click', Pozo.cargarDelForm);
     UI.id('btnVolverSalas').addEventListener('click', function () { irA('dashboard'); });
     UI.id('btnRecargarAsistencia').addEventListener('click', Asistencia.cargar);
     UI.id('btnGuardarApi').addEventListener('click', Config.guardar);

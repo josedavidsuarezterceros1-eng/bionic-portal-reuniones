@@ -228,7 +228,7 @@ h1, h2, h3, h4, .display { font-family: var(--font-display); font-weight: 600; l
 .campo { display: flex; flex-direction: column; gap: 6px; }
 .campo label { font-size: 12.5px; font-weight: 600; color: var(--txt-dim); letter-spacing: 0.01em; }
 
-input[type="text"], input[type="password"], input[type="email"], input[type="url"], input[type="date"], select {
+input:not([type="radio"]):not([type="checkbox"]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="range"]):not([type="color"]):not([type="file"]), select {
   width: 100%;
   padding: 12px 14px;
   border: 1px solid var(--borde);
@@ -1205,3 +1205,90 @@ tbody tr:hover { background: var(--surface); }
    campo de texto y dos botones, y en el teléfono en una línea no entran. */
 .verif-motivo { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .verif-texto { min-width: 170px; max-width: 100%; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   EL POZO (sep 2026, Paso 5)
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* El resumen que va en el panel, debajo de "Pedir producción". */
+.pozo-mini { margin-top: var(--sp-3); }
+
+/* El detalle de la matrícula en la pantalla proyectada. */
+.cel-detalle {
+  margin-top: var(--sp-3);
+  font-size: clamp(15px, 2.4vw, 19px);
+  color: var(--txt);
+  opacity: 0.92;
+}
+
+#pozoModal {
+  position: fixed; inset: 0; z-index: 80;
+  display: grid; place-items: center;
+  padding: var(--sp-4);
+  background: var(--overlay);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  overflow-y: auto;
+}
+.pozo-caja {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 2 * var(--sp-4));
+  overflow-y: auto;
+  padding: var(--sp-5);
+  border-radius: var(--r-xl);
+  border: 1px solid var(--borde-fuerte);
+  background: var(--bg-elev);
+  box-shadow: var(--sombra-alta);
+}
+.pozo-cab { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-2); }
+.pozo-cab h3 { flex: 1; display: flex; align-items: center; gap: 9px; font-size: 19px; }
+.pozo-ayuda { color: var(--txt-dim); font-size: 13px; margin-bottom: var(--sp-4); }
+#pozoCuerpo h4, .pozo-form h4 {
+  font-size: 11.5px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--txt-mute); margin: var(--sp-4) 0 var(--sp-2);
+}
+.pozo-vacio { color: var(--txt-mute); font-size: 13px; }
+
+.pozo-fila {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: 10px 12px;
+  border: 1px solid var(--borde);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  margin-bottom: 6px;
+}
+.pozo-quien { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pozo-tel { font-size: 12.5px; color: var(--txt-mute); font-variant-numeric: tabular-nums; }
+/*
+ * 🔴 EN EL TELÉFONO LA FILA SE PARTE EN DOS, y el nombre se queda con el renglón
+ * entero.
+ *
+ * A 390 px los cuatro elementos en una línea dejaban al nombre en "Lucía …" —
+ * y el nombre del usuario es justo lo que deja reconocer CUÁL venta es. Sacar el
+ * teléfono enmascarado para hacerle lugar tampoco servía: está ahí para
+ * distinguir dos ventas de la misma persona.
+ *
+ * Lo encontró una captura, no un check: el ancho de la caja estaba perfecto (no
+ * hay desborde) y el texto se recortaba en silencio.
+ */
+@media (max-width: 460px) {
+  .pozo-fila { flex-wrap: wrap; }
+  .pozo-quien { flex: 1 0 100%; order: -1; white-space: normal; }
+  .pozo-fila .btn { margin-left: auto; }
+}
+
+.pozo-hecha { opacity: 0.6; }
+.pozo-hecha .material-symbols-rounded { color: var(--txt-verde); font-size: 19px; }
+
+.pozo-form { margin-top: var(--sp-5); padding-top: var(--sp-4); border-top: 1px solid var(--borde); }
+.pozo-form .campo { margin-bottom: var(--sp-3); }
+.pozo-tipos { display: flex; gap: var(--sp-4); margin-bottom: var(--sp-3); font-size: 14px; }
+.pozo-tipos label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.pozo-opt { color: var(--txt-mute); font-weight: 400; }
+
+/* ⚠️ En el teléfono el modal ocupa todo: se carga desde el celular, de pie y
+   apurado, y una caja centrada con márgenes deja los campos en media pantalla. */
+@media (max-width: 560px) {
+  #pozoModal { padding: 0; place-items: stretch; }
+  .pozo-caja { max-height: 100vh; border-radius: 0; border: 0; }
+}
