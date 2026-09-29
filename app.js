@@ -532,10 +532,154 @@ var Audio_ = (function () {
     });
   }
 
+  /*
+   * ══════════════════════════════════════════════════════════════════════════
+   * LA LLAMADA SUENA (sep 2026): un golpe por «a la una / a las dos / a las tres»,
+   * el REDOBLE desde «a las dos» hasta el destape, y el PLATILLO al destapar.
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * Es el sonido del prototipo que aprobó el dueño. Como todo el sonido automático,
+   * lo decide `Sala.sonarSiAnfitrion`: sale de UNA máquina y viaja por Meet.
+   */
+
+  /** El golpe de cada número: una campana y un bombo grave que sube con la cuenta. */
+  function sonidoGolpe(n) {
+    var c = contexto(); if (!c) return;
+    var t0 = c.currentTime;
+    var tono = [330, 440, 554.37, 659.25][n] || 440;
+    var osc = c.createOscillator(), gain = c.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(tono, t0);
+    gain.gain.setValueAtTime(0.5, t0);
+    gain.gain.exponentialRampToValueAtTime(0.001, t0 + 1.2);
+    osc.connect(gain); gain.connect(c.destination);
+    osc.start(t0); osc.stop(t0 + 1.25);
+
+    var sub = c.createOscillator(), subGain = c.createGain();
+    sub.type = 'sine';
+    sub.frequency.setValueAtTime(110 + n * 25, t0);
+    sub.frequency.exponentialRampToValueAtTime(45, t0 + 0.5);
+    subGain.gain.setValueAtTime(0.55, t0);
+    subGain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.6);
+    sub.connect(subGain); subGain.connect(c.destination);
+    sub.start(t0); sub.stop(t0 + 0.65);
+  }
+
+  /** El platillo del destape: un racimo metálico y un soplo de ruido brillante. */
+  function sonidoPlatillo() {
+    var c = contexto(); if (!c) return;
+    var t0 = c.currentTime;
+    [312, 420, 545, 680, 890, 1120].forEach(function (f) {
+      var osc = c.createOscillator(), gain = c.createGain(), bpf = c.createBiquadFilter();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(f, t0);
+      bpf.type = 'bandpass';
+      bpf.frequency.setValueAtTime(f * 1.5, t0);
+      bpf.Q.setValueAtTime(6, t0);
+      gain.gain.setValueAtTime(0.06, t0);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.8);
+      osc.connect(bpf); bpf.connect(gain); gain.connect(c.destination);
+      osc.start(t0); osc.stop(t0 + 1.85);
+    });
+    var dur = 2.4;
+    var buf = c.createBuffer(1, Math.floor(c.sampleRate * dur), c.sampleRate);
+    var d = buf.getChannelData(0);
+    for (var i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (c.sampleRate * 0.7));
+    var ruido = c.createBufferSource(), filtro = c.createBiquadFilter(), g = c.createGain();
+    ruido.buffer = buf;
+    filtro.type = 'highpass';
+    filtro.frequency.setValueAtTime(4500, t0);
+    filtro.frequency.linearRampToValueAtTime(2800, t0 + dur);
+    g.gain.setValueAtTime(0.55, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    ruido.connect(filtro); filtro.connect(g); g.connect(c.destination);
+    ruido.start(t0);
+  }
+
+  /*
+   * ── El REDOBLE ──────────────────────────────────────────────────────────
+   *
+   * Es un archivo (`sonidos/redoble.mp3`, de Pixabay, licencia de uso libre): el que
+   * eligió el dueño. Se baja y se decodifica al DESBLOQUEAR el audio —en el clic de
+   * ingresar—, no cuando arranca la llamada: decodificar en ese momento lo haría
+   * entrar tarde, con la sala esperando el «a las dos».
+   *
+   * 🔴 Si el archivo no llega (404, sin red, un navegador que no decodifica mp3),
+   * suena un redoble SINTETIZADO. No hay error a la vista en ninguno de los dos
+   * casos; la diferencia es solo cómo suena.
+   */
+  var redobleBuf = null, redobleCargando = false;
+  var redobleFuente = null, redobleTimer = null;
+
+  function cargarRedoble() {
+    var c = contexto();
+    if (!c || redobleBuf || redobleCargando || typeof fetch !== 'function') return;
+    redobleCargando = true;
+    fetch('sonidos/redoble.mp3')
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+      .then(function (ab) {
+        return new Promise(function (ok, mal) { c.decodeAudioData(ab, ok, mal); });
+      })
+      .then(function (b) { redobleBuf = b; })
+      .catch(function () { /* queda el sintetizado */ })
+      .then(function () { redobleCargando = false; });
+  }
+
+  function redobleParar() {
+    if (redobleTimer) { clearTimeout(redobleTimer); redobleTimer = null; }
+    if (redobleFuente) {
+      try { redobleFuente.stop(); redobleFuente.disconnect(); } catch (e) {}
+      redobleFuente = null;
+    }
+  }
+
+  function redobleEmpezar() {
+    redobleParar();
+    var c = contexto(); if (!c) return;
+    if (redobleBuf) {
+      var s = c.createBufferSource(), g = c.createGain();
+      s.buffer = redobleBuf;
+      s.loop = true;            // si la llamada se estira, el redoble no se corta
+      g.gain.setValueAtTime(0.8, c.currentTime);
+      s.connect(g); g.connect(c.destination);
+      s.start(0);
+      redobleFuente = s;
+      return;
+    }
+    // Sintetizado: golpes de tambor cada vez más rápidos y más fuertes.
+    var inicio = c.currentTime, n = 0;
+    var golpe = function () {
+      var ahora = c.currentTime, pasado = ahora - inicio;
+      var ritmo = Math.min(36, 16 + pasado * 1.8);
+      var b = c.createBuffer(1, Math.floor(c.sampleRate * 0.045), c.sampleRate);
+      var d = b.getChannelData(0);
+      for (var i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (d.length * 0.28));
+      var r = c.createBufferSource(), f = c.createBiquadFilter(), g2 = c.createGain();
+      r.buffer = b;
+      f.type = 'highpass'; f.frequency.value = 1100;
+      var acento = n % 4 === 0 ? 1.3 : 0.88, crescendo = Math.min(1.8, 0.45 + pasado * 0.12);
+      g2.gain.setValueAtTime(0.3 * acento * crescendo, ahora);
+      g2.gain.exponentialRampToValueAtTime(0.001, ahora + 0.04);
+      r.connect(f); f.connect(g2); g2.connect(c.destination);
+      r.start(ahora);
+      n++;
+      redobleTimer = setTimeout(golpe, 1000 / ritmo);
+    };
+    golpe();
+  }
+
   return {
-    desbloquear: desbloquear,
+    desbloquear: function () { desbloquear(); cargarRedoble(); },
     aviso: function () { try { sonidoAviso(); } catch (e) {} },
+    golpe: function (n) { try { sonidoGolpe(n); } catch (e) {} },
+    redobleEmpezar: function () { try { redobleEmpezar(); } catch (e) {} },
+    redobleParar: function () { try { redobleParar(); } catch (e) {} },
     tocar: function (tipo) {
+      try { tipo === 'matricula' ? sonidoMatricula() : sonidoAbono(); } catch (e) {}
+    },
+    /** El destape entero: corta el redoble, platillo, y el sonido del tipo. */
+    destape: function (tipo) {
+      try { redobleParar(); sonidoPlatillo(); } catch (e) {}
       try { tipo === 'matricula' ? sonidoMatricula() : sonidoAbono(); } catch (e) {}
     }
   };
@@ -585,19 +729,48 @@ var Tema = (function () {
    Confeti
    ══════════════════════════════════════════════════════════════════════════ */
 var Confeti = (function () {
-  function tirar(tipo) {
+  var DORADOS = ['#D97706', '#F59E0B', '#059669', '#10B981', '#FFD700', '#FDE047'];
+  var lanzador = null;
+
+  /*
+   * 🔴 El confeti se dibuja en un lienzo PROPIO, adentro de la sala (`#confetiLienzo`).
+   *
+   * canvas-confetti, llamado a secas, pega su lienzo en el <body>. En pantalla
+   * completa el navegador dibuja SOLO lo que está adentro del elemento maximizado —
+   * la sala—, así que en la pantalla que se PROYECTA el confeti no se veía nunca. Sin
+   * ningún error: en la computadora de cada uno, fuera de pantalla completa, salía
+   * perfecto.
+   */
+  function disparar(opts) {
     if (typeof window.confetti !== 'function') return;   // el CDN no cargó: se sigue sin papelitos
-    var cfg = tipo === 'matricula'
-      ? { particleCount: 110, spread: 90, colors: ['#2563eb', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6'] }
-      : { particleCount: 70,  spread: 70, colors: ['#f59e0b', '#10b981', '#3b82f6'] };
-    cfg.origin = { y: 0.62 };
-    try {
-      window.confetti(cfg);
+    if (!lanzador) {
+      var lienzo = document.getElementById('confetiLienzo');
+      lanzador = lienzo && typeof window.confetti.create === 'function'
+        ? window.confetti.create(lienzo, { resize: true })
+        : window.confetti;
+    }
+    try { lanzador(opts); } catch (e) {}
+  }
+
+  /** Matrícula: cinco ráfagas doradas y dos cañones; abono: una ráfaga más chica. */
+  function tirar(tipo) {
+    var base = { origin: { y: 0.7 }, colors: DORADOS };
+    var rafaga = function (proporcion, extra, total) {
+      disparar(Object.assign({}, base, extra, { particleCount: Math.floor(total * proporcion) }));
+    };
+    if (tipo === 'matricula') {
+      rafaga(0.25, { spread: 26, startVelocity: 55 }, 200);
+      rafaga(0.2, { spread: 60 }, 200);
+      rafaga(0.35, { spread: 100, decay: 0.91, scalar: 1.1 }, 200);
+      rafaga(0.1, { spread: 120, startVelocity: 25, decay: 0.92, scalar: 1.3 }, 200);
+      rafaga(0.1, { spread: 120, startVelocity: 45 }, 200);
       setTimeout(function () {
-        window.confetti(Object.assign({}, cfg, { angle: 60, origin: { x: 0, y: 0.7 } }));
-        window.confetti(Object.assign({}, cfg, { angle: 120, origin: { x: 1, y: 0.7 } }));
-      }, 220);
-    } catch (e) {}
+        disparar({ particleCount: 50, angle: 60, spread: 55, origin: { x: 0, y: 0.75 }, colors: DORADOS });
+        disparar({ particleCount: 50, angle: 120, spread: 55, origin: { x: 1, y: 0.75 }, colors: DORADOS });
+      }, 250);
+    } else {
+      rafaga(1, { spread: 70 }, 80);
+    }
   }
   return { tirar: tirar };
 })();
@@ -734,7 +907,7 @@ var UI = (function () {
    planilla del CRM. Acá solo se pide y se muestra.
    ══════════════════════════════════════════════════════════════════════════ */
 var Pozo = (function () {
-  var P = { pendientes: [], destapadas: [], abierto: false, enviando: false, recientes: null };
+  var P = { pendientes: [], destapadas: [], abierto: false, enviando: false, recientes: null, recientesError: '' };
 
   function cuantas() { return P.pendientes.length; }
 
@@ -758,12 +931,25 @@ var Pozo = (function () {
    * planilla —la del CRM— y solo hace falta cuando la persona va a cargar. En el
    * sondeo serían decenas de lecturas por minuto de una hoja ajena.
    */
+  /*
+   * ⚠️ Un fallo NO se pinta como lista vacía. "No hay ninguna sin cargar" cuando en
+   * realidad no se pudo leer el CRM le dice a la persona que ya cargó todo — y se
+   * queda sin cantar una venta que sí tenía.
+   */
   function pedirRecientes() {
     P.recientes = null;
+    P.recientesError = '';
     if (P.abierto) pintar();
     return API.get({ accion: 'pozoRecientes', token: Sesion.token })
-      .then(function (r) { P.recientes = (r && r.ok) ? (r.items || []) : []; })
-      .catch(function () { P.recientes = []; })
+      .then(function (r) {
+        if (r && r.ok) { P.recientes = r.items || []; return; }
+        P.recientes = [];
+        P.recientesError = (r && r.message) || 'No se pudo leer el CRM.';
+      })
+      .catch(function (e) {
+        P.recientes = [];
+        P.recientesError = (e && e.message) || 'Error de conexión.';
+      })
       .then(function () { if (P.abierto) pintar(); });
   }
 
@@ -807,6 +993,10 @@ var Pozo = (function () {
      */
     html += '<h4>Sus matrículas de las últimas 48 h</h4>';
     if (P.recientes === null) html += '<p class="pozo-vacio">Buscando en el CRM…</p>';
+    else if (P.recientesError) {
+      html += '<p class="pozo-vacio pozo-error">No se pudo revisar el CRM: ' + UI.esc(P.recientesError) +
+        ' Puede cargarla a mano abajo.</p>';
+    }
     else if (!P.recientes.length) html += '<p class="pozo-vacio">No hay ninguna sin cargar.</p>';
     else html += P.recientes.map(function (it) {
       return '<div class="pozo-fila">' + chip(it.tipo) +
@@ -836,7 +1026,7 @@ var Pozo = (function () {
    * resto de la sala espera sin entender por qué.
    */
   function cargar(datos, boton) {
-    if (P.enviando) return Promise.resolve();
+    if (P.enviando) return Promise.resolve(false);
     P.enviando = true;
     if (boton) boton.disabled = true;
     return API.post({
@@ -849,16 +1039,19 @@ var Pozo = (function () {
        * hacer —"ese lead está en EN SEGUIMIENTO, se cambia en el CRM"— y un aviso
        * que se va antes de que lo lean no avisó nada.
        */
-      if (!r || !r.ok) { UI.toast((r && r.message) || 'No se pudo cargar.', 'error', 7000); return; }
+      if (!r || !r.ok) { UI.toast((r && r.message) || 'No se pudo cargar.', 'error', 7000); return false; }
       UI.toast('Cargada. Se canta cuando el anfitrión pida producción.', 'ok');
       if (r.aviso) UI.toast(r.aviso, 'info', 6000);
       aplicar(r.pozo);
       pedirRecientes();
+      return true;
     }).catch(function (e) {
-      UI.toast(e.message || 'Error de conexión.', 'error');
-    }).then(function () {
+      UI.toast((e && e.message) || 'Error de conexión.', 'error');
+      return false;
+    }).then(function (cargada) {
       P.enviando = false;
       if (boton) boton.disabled = false;
+      return cargada === true;
     });
   }
 
@@ -872,7 +1065,7 @@ var Pozo = (function () {
         aplicar(r.pozo);
         pedirRecientes();
       })
-      .catch(function (e) { UI.toast(e.message || 'Error de conexión.', 'error'); })
+      .catch(function (e) { UI.toast((e && e.message) || 'Error de conexión.', 'error'); })
       .then(function () { P.enviando = false; if (boton) boton.disabled = false; });
   }
 
@@ -884,7 +1077,13 @@ var Pozo = (function () {
       telefono: UI.id('pozoTel').value,
       alumno: UI.id('pozoAlumno').value,
       ciudad: UI.id('pozoCiudad').value
-    }, UI.id('btnPozoGuardar')).then(function () {
+    }, UI.id('btnPozoGuardar')).then(function (cargada) {
+      /*
+       * ⚠️ Se vacía SOLO si entró. Ante un rechazo ("ese lead está en ABONO", "está a
+       * nombre de otra persona") el aviso explica qué corregir, y borrar lo escrito
+       * obligaba a tipearlo todo de nuevo para corregir un solo dato.
+       */
+      if (!cargada) return;
       UI.id('pozoTel').value = '';
       UI.id('pozoAlumno').value = '';
       UI.id('pozoCiudad').value = '';
@@ -896,7 +1095,7 @@ var Pozo = (function () {
     refrescar: refrescar, cargarDelForm: cargarDelForm,
     /* ⚠️ Al salir de la sala se limpia: el pozo es de la PERSONA, pero la pantalla
        no puede quedar mostrando lo de la sesión anterior tras cerrar sesión. */
-    limpiar: function () { P.pendientes = []; P.destapadas = []; P.recientes = null; cerrar(); }
+    limpiar: function () { P.pendientes = []; P.destapadas = []; P.recientes = null; P.recientesError = ''; cerrar(); }
   };
 })();
 
@@ -919,7 +1118,12 @@ var Sala = (function () {
     asisIngreso: null,   // a qué hora quedó registrado (lo dice el servidor)
     asisTarde: false,    // …y si esa hora llegó tarde a la reunión
     ultimoItem: null,    // para el botón de repetir sirena
-    ceroPedido: null     // finTs para el que ya se pidió la consulta del segundo cero
+    ceroPedido: null,    // finTs para el que ya se pidió la consulta del segundo cero
+    /* La tarjeta del HISTORIAL que el anfitrión eligió volver a mostrar (su número de
+       orden), o null = la de ahora. Es local: no toca el pozo ni a nadie más. */
+    verOrdinal: null,
+    rondaVista: null,    // rondaId de la última ronda vista: al cambiar, se olvida `verOrdinal`
+    ultimoGolpe: null    // rondaId:golpe ya sonado, para que cada golpe suene UNA vez
   };
 
   /* ── ciclo de vida ─────────────────────────────────────────────────── */
@@ -941,6 +1145,9 @@ var Sala = (function () {
     S.asisTarde = false;
     S.redCaida = false;
     S.ceroPedido = null;
+    S.verOrdinal = null;
+    S.rondaVista = null;
+    S.ultimoGolpe = null;
     // "Ya se decidió algo sobre esta sala en esta visita". Ver `autoTomarSala`.
     S.autoTomaResuelta = false;
     /*
@@ -971,7 +1178,10 @@ var Sala = (function () {
     clearTimeout(S.timerPoll); clearInterval(S.timerTick); clearInterval(S.timerAsis);
     S.timerPoll = S.timerTick = S.timerAsis = null;
     S.enReunion = false;
-    cerrarCelebracion();
+    // El redoble corre con su propio temporizador: salir en plena llamada lo dejaría
+    // sonando en una pantalla que ya no muestra nada.
+    Audio_.redobleParar();
+    UI.mostrar(UI.id('escenario'), false);
     S.sala = null; S.estado = null;
   }
 
@@ -1066,9 +1276,23 @@ var Sala = (function () {
     } catch (e) { /* un título que no se puede escribir no puede tirar el sondeo */ }
   }
 
+  /*
+   * ¿Hay FESTEJO ahora? La llamada, o los primeros segundos de un destape.
+   *
+   * 🔴 No es «hay una tarjeta en pantalla»: desde sep 2026 la tarjeta se queda hasta
+   * la próxima pulsación, que pueden ser minutos de felicitaciones. Si esto siguiera
+   * a la tarjeta, la pestaña gritaría «¡PRODUCCIÓN!» y el sondeo iría al ritmo rápido
+   * durante media reunión. Lo decide el SERVIDOR (`enShow`), con su reloj, así todas
+   * las pantallas cambian juntas.
+   *
+   * ⚠️ Sin `enShow` (un backend anterior, durante los minutos del despliegue) vale la
+   * regla vieja: ahí la tarjeta todavía se iba sola.
+   */
   function hayShow(est) {
-    var f = est && est.ronda && est.ronda.fase;
-    return f === 'llamada' || f === 'reveal';
+    var r = est && est.ronda;
+    if (!r) return false;
+    if (typeof r.enShow === 'boolean') return r.enShow;
+    return r.fase === 'llamada' || r.fase === 'reveal';
   }
 
   function cadencia() {
@@ -1101,9 +1325,7 @@ var Sala = (function () {
   }
 
   function aplicar(r) {
-    // Se leen ANTES de pisar S.estado: las dos cosas van por TRANSICIÓN.
-    var eraAnfitrion = !!(S.estado && S.estado.soyAnfitrion);
-    // Se lee ANTES de pisar S.estado: la apertura del panel va por transición.
+    // Se lee ANTES de pisar S.estado: el aviso de la llamada y el título van por TRANSICIÓN.
     var showAntes = hayShow(S.estado);
     /*
      * 🔴 Si me sacaron la sala, tengo que enterarme por un cartel, no por deducirlo.
@@ -1166,40 +1388,19 @@ var Sala = (function () {
     }
 
     /*
-     * 🔴 El panel se ABRE SOLO cuando arranca el show, y se vuelve a esconder al
-     * terminar. Para TODOS, no solo para el anfitrión.
-     *
-     * En pantalla completa el panel arranca escondido (pantalla limpia, decisión
-     * del dueño ago 2026). Sin esta apertura automática, el anfitrión pedía
-     * producción y quien tuviera el panel escondido **no veía nada**: ni la cuenta
-     * regresiva ni los botones de "¡Tengo Matrícula!". Un asesor nuevo ni siquiera
-     * sabe que existe el ojito, así que se perdía su propia venta sin entender por
-     * qué — y nadie se entera, porque en pantalla no falla nada.
-     *
-     * Se dispara por TRANSICIÓN, no por estado: si se llamara en cada sondeo,
-     * volvería a abrir el panel dos segundos después de que la persona lo cierre a
-     * mano en medio de la ronda.
-     */
-    // Recién ahora se sabe que es anfitrión: si está en pantalla completa con la
-    // pantalla limpia, le falta el botón de pedir producción.
-    if (!eraAnfitrion && r.soyAnfitrion) Pantalla.alAscenderAAnfitrion();
-
-    /*
      * ══════════════════════════════════════════════════════════════════════
      * 🔴 QUE LA RONDA LLEGUE A QUIEN ESTÁ MIRANDO MEET, NO EL PORTAL.
      * ══════════════════════════════════════════════════════════════════════
      *
      * Este es el agujero que abrió Google Meet: la reunión vive en OTRA PESTAÑA,
      * así que cuando el anfitrión pide producción **nadie está mirando el portal**.
-     * El panel se abre solo, sí — pero en una pestaña que está de fondo, y lo único
-     * que llega hasta la pestaña de al lado son el TÍTULO y el SONIDO.
+     * Lo único que llega hasta la pestaña de al lado son el TÍTULO y el SONIDO.
      *
-     * ⚠️ Va por TRANSICIÓN, como la apertura del panel: por estado sonaría en cada
-     * sondeo, o sea cada 2 segundos durante toda la ronda.
+     * ⚠️ Va por TRANSICIÓN: por estado sonaría en cada sondeo, o sea cada 2 segundos
+     * durante toda la ronda.
      */
     if (showAntes !== hayShow(r)) {
-      if (hayShow(r)) { Pantalla.abrirPorRonda(); sonarSiAnfitrion(Audio_.aviso); }
-      else Pantalla.cerrarPorRonda();
+      if (hayShow(r)) sonarSiAnfitrion(Audio_.aviso);
       tituloSegunRonda(hayShow(r));
       /*
        * 🔴 El pozo se relee en la TRANSICIÓN de la ronda, no en cada sondeo.
@@ -1220,7 +1421,13 @@ var Sala = (function () {
       Pozo.refrescar();
     }
 
-    detectarDestape(r.ronda);
+    var ronda = r.ronda || {};
+    // Una ronda nueva olvida la tarjeta del historial que se estaba volviendo a mirar.
+    if (ronda.rondaId !== S.rondaVista) { S.rondaVista = ronda.rondaId; S.verOrdinal = null; }
+    // Terminó la llamada (destape, pozo vacío o cambio de reunión): el redoble se corta.
+    if (ronda.fase !== 'llamada') Audio_.redobleParar();
+
+    detectarDestape(ronda);
     render();
   }
 
@@ -1228,16 +1435,24 @@ var Sala = (function () {
    * Un destape se festeja UNA vez. La clave es ronda + cuántos van, así que el
    * mismo destape leído en cinco polls seguidos no vuelve a sonar, y dos destapes
    * del mismo tipo y la misma persona en una ronda sí se festejan por separado.
+   *
+   * ⚠️ La TARJETA la pinta `renderEscenario` y se queda; acá solo va el FESTEJO: el
+   * sonido y el confeti. Y solo si el destape es fresco (`enShow`): quien entra a la
+   * sala con una tarjeta ya quieta en pantalla la ve, pero no le suena una sirena a
+   * destiempo — y si es el anfitrión, no se la hace sonar a toda la reunión.
    */
   function detectarDestape(ronda) {
-    if (!ronda || ronda.fase !== 'reveal' || !ronda.itemActual) {
-      if (!ronda || ronda.fase !== 'reveal') cerrarCelebracion();
-      return;
-    }
+    if (!ronda || ronda.fase !== 'reveal' || !ronda.itemActual) return;
     var clave = ronda.rondaId + ':' + ronda.revelados;
     if (clave === S.ultimoDestape) return;
     S.ultimoDestape = clave;
-    celebrar(ronda.itemActual);
+    S.ultimoItem = ronda.itemActual;
+    if (ronda.enShow === false) return;
+    var tipo = ronda.itemActual.tipo;
+    // Solo en la máquina del anfitrión: de ahí viaja por Meet (ver sonarSiAnfitrion).
+    // El confeti sí sale en todas: es de la pantalla de cada uno, no del parlante.
+    sonarSiAnfitrion(function () { Audio_.destape(tipo); });
+    Confeti.tirar(tipo);
   }
 
   /* ── la llamada: «Preparando… ¡a la una! ¡a las dos! ¡a las tres!» ──── */
@@ -1257,12 +1472,18 @@ var Sala = (function () {
    * resuelto sin ella. Y como es proporción, el preview puede acortar la llamada
    * sin que se desarme.
    */
+  /*
+   * Hasta qué fracción de la llamada dura cada golpe. Son los tiempos del prototipo
+   * que aprobó el dueño (sep 2026), sobre una llamada de 11,5 s: «a la una» a los
+   * 2 s, «a las dos» a los 5 —ahí entra el redoble—, «¡a las tres!» a los 8,2 y el
+   * destape al final. Como son PROPORCIONES, el preview puede cambiar la duración
+   * sin desarmar la cuenta.
+   */
   var GOLPES = [
-    // hasta qué fracción de la llamada dura cada golpe
-    { hasta: 0.23, clave: 'prep', txt: 'Preparando…' },
-    { hasta: 0.46, clave: 'una',  txt: '¡A la una!' },
-    { hasta: 0.69, clave: 'dos',  txt: '¡A las dos!' },
-    { hasta: 1.01, clave: 'tres', txt: '¡A las tres!' }
+    { hasta: 0.174, clave: 'prep', num: '',  txt: 'Preparando…' },
+    { hasta: 0.435, clave: 'una',  num: '1', txt: '¡A la una!' },
+    { hasta: 0.713, clave: 'dos',  num: '2', txt: '¡A las dos!' },
+    { hasta: 1.01,  clave: 'tres', num: '3', txt: '¡A las tres!' }
   ];
 
   /*
@@ -1289,7 +1510,7 @@ var Sala = (function () {
     return GOLPES[GOLPES.length - 1];
   }
 
-  /** Pinta el golpe sobre el DOM que ya puso `renderLlamada`, sin repintar el bloque. */
+  /** Pinta el golpe sobre el DOM que ya puso `renderEscenario`, sin repintar el bloque. */
   function pintarLlamada(ronda) {
     var caja = UI.id('llamada');
     var golpe = UI.id('llamadaGolpe');
@@ -1300,6 +1521,25 @@ var Sala = (function () {
     if (caja.getAttribute('data-golpe') === g.clave) return;
     caja.setAttribute('data-golpe', g.clave);
     golpe.textContent = g.txt;
+    var num = UI.id('llamadaNum');
+    if (num) num.textContent = g.num;
+
+    /*
+     * El SONIDO de cada golpe, y el redoble desde «a las dos». Solo en la máquina
+     * del anfitrión, como todo el sonido automático.
+     *
+     * ⚠️ UNA vez por golpe y por ronda: el bloque se repinta (y este atributo vuelve
+     * a vacío) cada vez que cambia su firma, y sin esta marca el mismo golpe sonaría
+     * de nuevo en cada repintado.
+     */
+    var marca = ronda.rondaId + ':' + g.clave;
+    if (g.num && S.ultimoGolpe !== marca) {
+      S.ultimoGolpe = marca;
+      sonarSiAnfitrion(function () {
+        Audio_.golpe(parseInt(g.num, 10));
+        if (g.clave === 'dos') Audio_.redobleEmpezar();
+      });
+    }
   }
 
   function tick() {
@@ -1330,21 +1570,17 @@ var Sala = (function () {
   function render() {
     if (!S.estado) return;
     /*
-     * 🔴 CON RONDA EN CURSO, Producción ocupa el ANCHO COMPLETO.
+     * 🔴 La ceremonia vive en el ESCENARIO (sep 2026), no en el panel.
      *
-     * Fuera de la ronda el panel son tres tarjetas repartidas a lo ancho y no hay
-     * mucho que hacer —la reunión está en la otra pestaña—. Pero la llamada y el
-     * destape son EL momento de esta pantalla, y en una columna de 400 px quedaban
-     * del mismo tamaño que un aviso cualquiera.
-     *
-     * ⚠️ Va por ESTADO y no por transición, al revés que `Pantalla.abrirPorRonda`:
-     * ahí el motivo es que el usuario puede cerrar el panel a mano y el estado se
-     * lo volvería a abrir. Acá no hay nada que el usuario decida, y por estado
-     * queda bien también para quien ENTRA a la sala con la ronda ya empezada.
+     * Hasta acá la llamada se dibujaba adentro del bloque Producción —que con la
+     * ronda en curso se estiraba a lo ancho— y el destape era un overlay oscuro que
+     * tapaba la pantalla entera. Con la tarjeta que ahora se QUEDA minutos, ese
+     * overlay tapaba todo lo demás: el panel, «Liberar la sala», la barra. El
+     * escenario es una franja propia, entre la barra y el panel, y en pantalla
+     * completa es lo que se proyecta.
      */
-    var panel = UI.$('.panel-lado');
-    if (panel) panel.classList.toggle('con-ronda', hayShow(S.estado));
     renderEspera();
+    renderEscenario();
     renderAnfitrion();
     renderFestejo();
     renderAsistencia();
@@ -1502,7 +1738,7 @@ var Sala = (function () {
     icono.textContent = 'lock_clock';
     titulo.textContent = 'Esperando al anfitrión';
     txt.textContent = r.puedoReclamar
-      ? 'Puede tomar esta sala usted: use el panel de la derecha.'
+      ? 'Puede conducirla usted: use el bloque «Anfitrión».'
       : 'La reunión se abre cuando un responsable toma la sala.';
   }
 
@@ -1521,228 +1757,144 @@ var Sala = (function () {
     Sala.alEntrarAReunion(true);
   }
 
+  /*
+   * EL BLOQUE DEL ANFITRIÓN, con el estilo del escenario (sep 2026).
+   *
+   * Una ficha —foto con aro, nombre, cargo y un chip de estado— y, debajo, lo que
+   * esta persona puede hacer. Vive en el PANEL y no en el escenario a propósito:
+   * «Liberar la sala» no puede estar a un clic en plena ceremonia (decisión del
+   * dueño), y en pantalla completa el panel queda detrás del ojito.
+   *
+   * Las REGLAS no cambiaron, solo cómo se ven: tomar una sala libre no pide nada;
+   * sacársela a alguien presente pide la contraseña y un cargo superior; si el
+   * anfitrión dejó de dar señal, cualquiera que pueda conducir la toma sin
+   * contraseña. Todo eso lo decide el servidor (`puedoReclamar`, `puedoDesplazar`).
+   *
+   * ⚠️ «Sin señal» lo ve TODO EL MUNDO, no solo quien puede rescatar: el asesor es
+   * el que más rato mira una reunión donde no pasa nada, y sin ese chip no distingue
+   * "el anfitrión se cayó" de "todavía no pidió producción".
+   */
   function renderAnfitrion() {
     var r = S.estado;
     var cont = UI.id('anfitrionCuerpo');
-    var mod = !!(r.anfitrion && r.anfitrion.moderadorOk);
+    var a = r.anfitrion;
+    var mod = !!(a && a.moderadorOk);
     var firma = [
-      r.soyAnfitrion ? 'yo' : (r.anfitrion ? 'otro' : 'nadie'),
-      r.anfitrion ? r.anfitrion.nombre : '',
-      r.anfitrion ? !!r.anfitrion.ausente : false,
+      r.soyAnfitrion ? 'yo' : (a ? 'otro' : 'nadie'),
+      a ? a.nombre : '', a ? !!a.ausente : false,
       mod, r.puedoReclamar, r.puedoDesplazar
     ].join('|');
 
+    /** La ficha de quien conduce, con su chip de estado. */
+    var ficha = function (chip, claseChip) {
+      return '<div class="anf-cara' + (a && a.ausente ? ' anf-caido' : '') + '">' +
+        UI.avatar(a.foto, a.nombre, 'avatar-anf') +
+        '<div class="anf-datos"><strong>' + UI.esc(a.nombre) + '</strong>' +
+          '<span>' + UI.esc(a.cargo || '') + '</span></div>' +
+        '<span class="anf-chip ' + claseChip + '">' + chip + '</span>' +
+      '</div>';
+    };
+    var desde = a && a.desde ? '<p class="anf-nota">Conduce desde las ' + UI.hora(a.desde) + '.</p>' : '';
+    // ⚠️ El icono va ESCRITO al lado del <span>, no en una variable: el auditor de
+    // iconos (verify-frontend) solo resuelve los literales, y uno que no ve lo daría
+    // por sobrante de `icon_names` — ahí el botón mostraría la PALABRA.
+    var accion = function (id, texto) {
+      return '<button class="btn-accion" id="' + id + '">' +
+        '<span class="material-symbols-rounded">shield_person</span> ' + texto + '</button>';
+    };
+
+    /* ── yo conduzco ─────────────────────────────────────────────────────── */
     if (r.soyAnfitrion) {
-      /*
-       * 🔴 YA NO HAY BOTÓN «Abrir la sala» acá (sep 2026, decisión del dueño).
-       *
-       * Ese botón nació para reemplazar el aviso del video incrustado, que con Meet
-       * en otra pestaña no llega nunca. Pero era un paso de trámite con la filial
-       * mirando: no hay nada sobre la reunión de Meet que el anfitrión pueda
-       * afirmar y el portal comprobar. Ahora la sala se abre en el mismo gesto de
-       * tomarla (ver `reclamarAnfitrion_` en el backend).
-       *
-       * ⚠️ El botón sobrevive SOLO como rescate, y en la otra pantalla: si el POST
-       * del reclamo se perdió en el transporte de un solo uso, `renderEspera` lo
-       * ofrece. Acá arriba sería un paso de más en el 99 % de las veces.
-       *
-       * ⚠️ Tampoco está "Finalizar reunión": con Meet afuera esa orden no llega a
-       * ninguna parte, así que prometía cerrarle la videollamada a todos y no hacía
-       * nada. Un botón que miente es peor que un botón que falta. La reunión se
-       * termina desde el propio Meet; acá se libera la sala.
-       */
       if (!pintarSi(cont, firma,
-        '<div class="aviso ' + (mod ? 'aviso-ok' : 'aviso-info') + '" style="margin-bottom:12px">' +
-          '<span class="material-symbols-rounded">' + (mod ? 'verified' : 'lock_clock') + '</span>' +
-          '<span>' + (mod
-            ? 'Usted conduce esta reunión. Su filial ya puede entrar.'
-            : 'Tomó la sala, pero todavía figura cerrada. Use «Abrir la sala» del panel de la izquierda.') + '</span>' +
-        '</div>' +
+        ficha(mod ? 'Usted conduce' : 'Sin abrir', mod ? 'anf-chip-ok' : 'anf-chip-alerta') +
+        (mod
+          ? desde + '<p class="anf-nota">Su filial ya puede entrar.</p>'
+          : '<div class="anf-alerta"><span class="material-symbols-rounded">lock_clock</span>' +
+            '<span>Tomó la sala, pero todavía figura cerrada. Use «Abrir la sala» de la barra de arriba.</span></div>') +
         '<button class="btn btn-fantasma btn-bloque" id="btnLiberar">' +
           '<span class="material-symbols-rounded">logout</span> Liberar la sala</button>')) return;
       UI.id('btnLiberar').onclick = liberar;
       return;
     }
 
-    if (r.anfitrion) {
-      var ficha =
-        '<div class="anfitrion-cara">' + UI.avatar(r.anfitrion.foto, r.anfitrion.nombre) +
-          '<div><strong>' + UI.esc(r.anfitrion.nombre) + '</strong>' +
-          '<span>' + UI.esc(r.anfitrion.cargo || '') + '</span></div></div>' +
-        '<div class="dato-fila"><span class="k">Desde</span>' +
-        '<span class="v">' + UI.hora(r.anfitrion.desde) + '</span></div>' +
-        /*
-         * Que dejó de responder lo ve TODO EL MUNDO, no solo quien puede rescatar la
-         * sala. El asesor es el que más rato se queda mirando una reunión donde no
-         * pasa nada: sin este renglón no tiene forma de saber si el anfitrión se cayó
-         * o si simplemente todavía no pidió producción, y lo natural es suponer que
-         * el portal se rompió.
-         */
-        (r.anfitrion.ausente
-          ? '<div class="dato-fila"><span class="k">Conexión</span>' +
-            '<span class="v" style="color:var(--ambar,#f59e0b)">Sin señal</span></div>'
-          : '');
-
-      /*
-       * El anfitrión dejó de dar señales: se cayó su internet o se fue. El botón NO
-       * habla de cargos —acá no se le saca la sala a nadie, no hay nadie— y por eso
-       * dice qué pasó: si apareciera un "Tomar la sala" a secas, el que lo aprieta
-       * no sabría si está destrabando una reunión o pisando a un compañero.
-       *
-       * Quién puede lo decide el SERVIDOR (`puedoReclamar`). El frontend no rehace
-       * ni la cuenta de los minutos ni la comparación de cargos: serían una segunda
-       * copia de reglas que ya viven en un solo lugar.
-       */
-      if (r.anfitrion.ausente && r.puedoReclamar) {
-        if (!pintarSi(cont, firma, ficha +
-          '<div class="aviso aviso-info" style="margin:12px 0 10px">' +
-            '<span class="material-symbols-rounded">network_check</span>' +
-            '<span>' + UI.esc(r.anfitrion.nombre) + ' dejó de responder. ' +
-            'Puede tomar la sala para seguir con la reunión.</span></div>' +
-          '<button class="btn btn-primario btn-bloque" id="btnReclamar">' +
-            '<span class="material-symbols-rounded">shield_person</span> Tomar la sala</button>')) return;
-        UI.id('btnReclamar').onclick = reclamar;
+    /* ── la conduce otra persona ─────────────────────────────────────────── */
+    if (a) {
+      if (a.ausente) {
+        var aviso = '<div class="anf-alerta"><span class="material-symbols-rounded">network_check</span>' +
+          '<span>' + UI.esc(a.nombre) + ' dejó de responder.' +
+          (r.puedoReclamar ? ' Puede tomar la sala para seguir con la reunión.'
+                           : ' La reunión sigue cuando alguien de Sub Gerencia para arriba tome la sala.') +
+          '</span></div>';
+        if (!pintarSi(cont, firma, ficha('Sin señal', 'anf-chip-alerta') + aviso +
+          (r.puedoReclamar ? accion('btnReclamar', 'Tomar la sala') : ''))) return;
+        if (r.puedoReclamar) UI.id('btnReclamar').onclick = reclamar;
         return;
       }
 
-      /*
-       * Sala ocupada por otro que SÍ está. Antes acá se terminaba: quien llegaba
-       * después no tenía NADA que hacer salvo esperar a que el otro la liberara, o
-       * a que venciera el TTL de 2 h.
-       */
-      if (!r.puedoDesplazar) { pintarSi(cont, firma, ficha); return; }
+      if (!r.puedoDesplazar) { pintarSi(cont, firma, ficha('Conduce', 'anf-chip-ok') + desde); return; }
 
-      if (!pintarSi(cont, firma, ficha +
-        '<p style="font-size:12.5px;color:var(--txt-dim);margin:12px 0 10px">' +
-          'Su cargo es superior: puede tomarle la sala. ' +
-          UI.esc(r.anfitrion.nombre) + ' deja de conducir la reunión, pero ' +
-          '<strong>la videollamada no se corta</strong>.</p>' +
-        '<div class="campo" style="margin-bottom:10px">' +
-          '<input type="password" id="passAnfitrion" placeholder="Su contraseña" autocomplete="current-password">' +
+      if (!pintarSi(cont, firma, ficha('Conduce', 'anf-chip-ok') + desde +
+        '<p class="anf-nota">Su cargo es superior: puede tomarle la sala. ' +
+          UI.esc(a.nombre) + ' deja de conducir, pero <strong>la videollamada no se corta</strong>.</p>' +
+        '<div class="campo anf-pass">' +
+          '<input type="password" id="passAnfitrion" placeholder="Confirme con su contraseña" autocomplete="current-password">' +
         '</div>' +
-        '<button class="btn btn-primario btn-bloque" id="btnDesplazar">' +
-          '<span class="material-symbols-rounded">shield_person</span> Tomar la sala</button>')) return;
+        accion('btnDesplazar', 'Tomar la sala'))) return;
 
       UI.id('btnDesplazar').onclick = desplazar;
       UI.id('passAnfitrion').onkeydown = function (e) { if (e.key === 'Enter') desplazar(); };
       return;
     }
 
+    /* ── nadie conduce ───────────────────────────────────────────────────── */
     if (!r.puedoReclamar) {
-      pintarSi(cont, firma, '<p style="font-size:13px;color:var(--txt-dim)">' +
-        'Todavía nadie tomó esta sala. La abre un responsable de Sub Gerencia para arriba.</p>');
+      pintarSi(cont, firma,
+        '<div class="anf-vacia"><span class="material-symbols-rounded">hourglass_top</span>' +
+        '<div><strong>Esperando al anfitrión</strong>' +
+        '<p>La abre un responsable de Sub Gerencia para arriba.</p></div></div>');
       return;
     }
 
-    /*
-     * Sala LIBRE: sin contraseña. No se le quita nada a nadie y soltarla es un clic,
-     * así que el gesto de apretar el botón ya es la intención — pedir la contraseña
-     * encima era el trámite que hacía que abrir la reunión costara dos pantallas.
-     *
-     * ⚠️ La contraseña sigue viva donde importa: para sacarle la sala a OTRO. Si
-     * este panel volviera a pedirla, quedaría pidiendo algo que el servidor ya no
-     * exige — y el portal enseñaría una regla que no es la que aplica.
-     *
-     * Normalmente ni se ve: al entrar, la sala se toma sola. Este botón queda para
-     * cuando esa toma automática no salió (un 404 del transporte) o después de
-     * haberla liberado a mano.
-     */
     if (!pintarSi(cont, firma,
-      '<p style="font-size:13px;color:var(--txt-dim);margin-bottom:12px">' +
-        'Esta sala está libre. Tómela para abrir la videollamada.</p>' +
-      '<button class="btn btn-primario btn-bloque" id="btnReclamar">' +
-        '<span class="material-symbols-rounded">shield_person</span> Tomar la sala</button>')) return;
+      '<div class="anf-vacia"><span class="material-symbols-rounded">shield_person</span>' +
+      '<div><strong>Esta sala no tiene anfitrión</strong>' +
+      '<p>Tómela para conducir la reunión.</p></div></div>' +
+      accion('btnReclamar', 'Conducir esta reunión'))) return;
 
     UI.id('btnReclamar').onclick = reclamar;
   }
 
+  /*
+   * El bloque PRODUCCIÓN del panel: el pozo de cada uno, y nada más.
+   *
+   * 🔴 Desde sep 2026 la llamada, la tarjeta y el botón de pedir viven en el
+   * ESCENARIO (`renderEscenario`). Acá quedó lo que es de cada persona: cuánto tiene
+   * cargado y el botón para cargar más.
+   */
   function renderFestejo() {
     var r = S.estado;
     var cont = UI.id('festejoCuerpo');
-    var ronda = r.ronda || {};
-    var firma = [
-      r.sala.abierta, ronda.fase, ronda.rondaId, r.soyAnfitrion,
-      /*
-       * 🔴 CUÁNTAS TIENE CARGADAS VA EN LA FIRMA, y sin eso el pozo no se ve.
-       *
-       * `pintarSi` compara esta firma y no repinta si es igual. Cargar una
-       * producción no cambia NADA del estado de la sala —misma fase, misma ronda—,
-       * así que sin este campo la persona carga, el servidor la guarda bien, y el
-       * panel sigue diciendo "No tiene producción cargada" hasta que arranque una
-       * ronda. Es la misma trampa que ya se había pisado con "ya anoté".
-       */
-      Pozo.cuantas()
-    ].join('|');
+    /*
+     * 🔴 CUÁNTAS TIENE CARGADAS VA EN LA FIRMA, y sin eso el pozo no se ve.
+     *
+     * `pintarSi` compara esta firma y no repinta si es igual. Cargar una producción
+     * no cambia NADA del estado de la sala, así que sin este campo la persona carga,
+     * el servidor la guarda bien, y el panel sigue diciendo "No tiene producción
+     * cargada". Es la misma trampa que ya se había pisado con "ya anoté".
+     */
+    var firma = [r.sala.abierta, Pozo.cuantas()].join('|');
 
     /*
-     * 🔴 CON LA SALA CERRADA IGUAL SE PUEDE CARGAR, y esto es el punto del pozo.
-     *
-     * Antes este bloque cortaba acá con "el festejo se habilita cuando la sala esté
-     * abierta" — correcto cuando lo único que había eran los botones del conteo.
-     * Pero el pozo existe para cargar ANTES de la reunión: si el botón solo
-     * apareciera con la sala abierta, habría que esperar a que el anfitrión llegue
-     * para poder cargar, que es exactamente la prisa que esto vino a sacar.
+     * 🔴 CON LA SALA CERRADA IGUAL SE PUEDE CARGAR, y esto es el punto del pozo:
+     * existe para cargar ANTES de la reunión. Si el botón solo apareciera con la
+     * sala abierta, habría que esperar a que llegue el anfitrión.
      */
-    if (!r.sala.abierta) {
-      pintarSi(cont, firma, '<p style="font-size:13px;color:var(--txt-dim);margin-bottom:10px">' +
-        'El festejo empieza cuando el anfitrión abra la sala. Mientras tanto puede dejar ' +
-        'su producción cargada.</p>' + pozoHtml());
-      if (UI.id('btnCargarProd')) UI.id('btnCargarProd').onclick = Pozo.abrir;
-      return;
-    }
-
-    if (ronda.fase === 'llamada') { renderLlamada(ronda, cont, firma); return; }
-
-    if (ronda.fase === 'reveal') {
-      pintarSi(cont, firma, '<div class="aviso aviso-ok">' +
-        '<span class="material-symbols-rounded">celebration</span>' +
-        '<span>¡Festejando!</span></div>');
-      return;
-    }
-
-    // idle / fin
-    var cerro = ronda.fase === 'fin';
-    var html = '';
-    if (cerro) {
-      html += '<div class="aviso aviso-ok" style="margin-bottom:12px">' +
-        '<span class="material-symbols-rounded">emoji_events</span>' +
-        '<span><strong>¡No hay más producción!</strong><br>¡Gran reunión, equipo! 🎉</span></div>';
-    }
-    if (r.soyAnfitrion) {
-      /*
-       * ⚠️ El botón dice SIEMPRE "Pedir producción", nunca "Siguiente" —ni siquiera
-       * cuando ya hubo destapes—. Un "siguiente" delataría que queda otra, que es
-       * justo lo único que el teatro está cuidando (decisión 07 del plan).
-       */
-      html += '<button class="btn btn-verde btn-grande btn-bloque" id="btnPedir">' +
-        '<span class="material-symbols-rounded">campaign</span> Pedir producción</button>';
-      /*
-       * 🔴 EL RECORDATORIO DEL AUDIO, porque sin él el fallo es mudo.
-       *
-       * El sonido del festejo suena SOLO en esta máquina (sonarSiAnfitrion), y les
-       * llega a los demás por Meet únicamente si comparte la PESTAÑA con «También
-       * compartir el audio» — o toda la pantalla con audio del sistema, que en Mac
-       * no existe. Compartiendo una VENTANA nunca viaja audio. Si no lo sabe, nadie
-       * oye nada y no hay ningún error que le avise.
-       */
-      html += '<p class="aviso-audio" id="avisoAudio">' +
-        '<span class="material-symbols-rounded">volume_up</span>' +
-        '<span>El sonido sale de <strong>esta pantalla</strong>. En Meet, comparta ' +
-        '<strong>esta pestaña</strong> y tilde «También compartir el audio».</span></p>';
-    }
-    /*
-     * 🔴 EL POZO, para todos. Acá abajo va lo que cada uno tiene cargado y el
-     * botón para cargar más.
-     *
-     * Antes esto no existía: había que apretar DENTRO de los 30 segundos del
-     * conteo, y quien tenía internet lento perdía su venta delante de toda la
-     * filial. Ahora se carga antes, tranquilo, y el conteo es puro suspenso.
-     */
+    var html = r.sala.abierta ? '' :
+      '<p style="font-size:13px;color:var(--txt-dim);margin-bottom:10px">' +
+      'El festejo empieza cuando el anfitrión abra la sala. Mientras tanto puede dejar ' +
+      'su producción cargada.</p>';
     html += pozoHtml();
     if (!pintarSi(cont, firma, html)) return;
-    // Se le pasa el BOTÓN, no el evento: pedirProduccion lo deshabilita y le cambia
-    // el texto mientras la petición viaja.
-    if (UI.id('btnPedir')) UI.id('btnPedir').onclick = function () { pedirProduccion(this); };
     if (UI.id('btnCargarProd')) UI.id('btnCargarProd').onclick = Pozo.abrir;
   }
 
@@ -1752,39 +1904,239 @@ var Sala = (function () {
     return '<div class="pozo-mini">' +
       (n
         ? '<span class="chip chip-verde"><span class="material-symbols-rounded">savings</span> ' +
-          n + (n === 1 ? ' esperando turno' : ' esperando turno') + '</span>'
+          n + ' esperando turno</span>'
         : '<span style="font-size:13px;color:var(--txt-dim)">No tiene producción cargada.</span>') +
       '<button class="btn btn-bloque" id="btnCargarProd" style="margin-top:10px">' +
         '<span class="material-symbols-rounded">add_circle</span> Cargar producción</button>' +
     '</div>';
   }
 
-  /**
-   * 🔴 LA LLAMADA NO TIENE NADA QUE APRETAR, y ese es el cambio entero (sep 2026).
-   *
-   * Hasta el pozo los dos botones de producción vivían acá adentro: había que
-   * apretarlos dentro de los 30 segundos, así que quien tenía internet lento
-   * perdía su venta por medio segundo — delante de toda la filial. Ahora se carga
-   * antes y esto es un remate: «la primera… ¡a la una! ¡a las dos! ¡a las tres!».
-   *
-   * ⚠️ Se ve EXACTAMENTE IGUAL haya producción o no: si la llamada solo apareciera
-   * cuando queda algo, la filial aprendería a leerla en dos reuniones.
-   *
-   * ⚠️ El número de orden va en el HTML (cambia por ronda, y `rondaId` está en la
-   * firma); el golpe lo alterna `pintarLlamada` sobre el DOM ya puesto, porque
-   * cambia por RELOJ y `pintarSi` no se enteraría.
-   */
-  function renderLlamada(ronda, cont, firma) {
-    var html =
-      '<div class="llamada" id="llamada" data-golpe="">' +
-        '<p class="llamada-orden" id="llamadaOrden">' + UI.esc(ordinalTxt(ronda.ordinal)) + '</p>' +
-        '<p class="llamada-golpe" id="llamadaGolpe" aria-live="assertive">Preparando…</p>' +
-        // Tres marcas que se prenden con cada golpe: se lee desde el fondo de la sala.
-        '<div class="llamada-marcas" aria-hidden="true"><span></span><span></span><span></span></div>' +
-      '</div>';
 
-    pintarSi(cont, firma, html);
-    pintarLlamada(ronda);
+  /* ══════════════════════════════════════════════════════════════════════
+     EL ESCENARIO: la llamada, la tarjeta del destape, el historial y los
+     controles del anfitrión (sep 2026, diseño del prototipo que aprobó el dueño)
+     ══════════════════════════════════════════════════════════════════════
+
+     Qué se ve:
+       · LLAMADA   el número de orden, el golpe en grande y las tres marcas.
+       · TARJETA   quien hizo la producción, en grande, y el detalle. Se QUEDA
+                   hasta la próxima pulsación (decisión del dueño, 26-sep-2026).
+       · CIERRE    «No hay más producción», con el pozo vacío.
+       · y para el ANFITRIÓN, la barra de controles: Pedir producción y Repetir
+         sirena, con el recordatorio del audio.
+
+     🔴 Es un escenario CLARO en los dos temas (decisión del dueño, 28-sep): es lo
+     que se proyecta. Lleva sus propios colores, como antes los llevaba el overlay.
+  */
+
+  /** «LA TERCERA» → «la tercera»: lo que va entre paréntesis en el botón. */
+  function ordinalMin(n) { return ordinalTxt(n).toLowerCase(); }
+
+  /** «¡LA TERCERA!»: el rótulo grande arriba de la tarjeta. */
+  function ordinalTitulo(n) { return '¡' + ordinalTxt(n) + '!'; }
+
+  function renderEscenario() {
+    var r = S.estado, esc = UI.id('escenario');
+    if (!esc || !r) return;
+    var ronda = r.ronda || {};
+    var fase = ronda.fase || 'idle';
+    var conduce = !!(r.soyAnfitrion && r.sala.abierta);
+    var hist = ronda.historial || [];
+
+    // Qué tarjeta va: la de ahora, o una del historial que el anfitrión eligió volver a ver.
+    var tarjeta = fase === 'reveal' ? ronda.itemActual : null;
+    if (S.verOrdinal && fase !== 'llamada') {
+      var elegida = hist.filter(function (h) { return h.ordinal === S.verOrdinal; })[0];
+      if (elegida) tarjeta = elegida;
+    }
+    if (tarjeta) S.ultimoItem = tarjeta;   // lo que suena al apretar «Repetir sirena»
+
+    var cierre = fase === 'fin' && !tarjeta;
+    var visible = fase === 'llamada' || !!tarjeta || cierre || conduce;
+    UI.mostrar(esc, visible);
+    if (!visible) return;
+
+    /* ── el rótulo: «¡LA TERCERA!» sobre la tarjeta ─────────────────────── */
+    var orden = UI.id('escOrden');
+    var titulo = tarjeta && tarjeta.ordinal ? ordinalTitulo(tarjeta.ordinal) : '';
+    orden.textContent = titulo;
+    UI.mostrar(orden, !!titulo);
+
+    /* ── el cuerpo ───────────────────────────────────────────────────────── */
+    var cuerpo = UI.id('escCuerpo');
+    if (fase === 'llamada') {
+      /*
+       * ⚠️ El número de orden va en el HTML (cambia por ronda, y `rondaId` está en
+       * la firma); el golpe lo alterna `pintarLlamada` sobre el DOM ya puesto,
+       * porque cambia por RELOJ y `pintarSi` no se enteraría.
+       *
+       * 🔴 Se ve EXACTAMENTE IGUAL haya producción o no, y NUNCA dice el tipo: si
+       * con el pozo vacío se viera distinta, la sala sabría que no queda nada.
+       */
+      pintarSi(cuerpo, 'llamada|' + ronda.rondaId,
+        '<div class="llamada" id="llamada" data-golpe="">' +
+          '<p class="llamada-orden" id="llamadaOrden">' + UI.esc(ordinalTxt(ronda.ordinal)) + '</p>' +
+          '<div class="llamada-num" id="llamadaNum" aria-hidden="true"></div>' +
+          '<p class="llamada-golpe" id="llamadaGolpe" aria-live="assertive">Preparando…</p>' +
+          // Tres marcas que se prenden con cada golpe: se lee desde el fondo de la sala.
+          '<div class="llamada-marcas" aria-hidden="true">' +
+            '<span><b>1</b> A la una</span><span><b>2</b> A las dos</span><span><b>3</b> ¡A las tres!</span>' +
+          '</div>' +
+        '</div>');
+      pintarLlamada(ronda);
+    } else if (tarjeta) {
+      pintarSi(cuerpo, 'tarjeta|' + ronda.rondaId + '|' + tarjeta.ordinal + '|' + (tarjeta.ejecutivo || ''),
+        tarjetaHtml(tarjeta));
+    } else if (cierre) {
+      pintarSi(cuerpo, 'cierre|' + ronda.rondaId,
+        '<div class="esc-cierre">' +
+          '<span class="material-symbols-rounded">emoji_events</span>' +
+          '<h3>¡No hay más producción!</h3>' +
+          '<p>¡Gran reunión, equipo! 🎉</p>' +
+        '</div>');
+    } else {
+      // Solo el anfitrión llega acá: la sala está abierta y todavía no pidió nada.
+      pintarSi(cuerpo, 'listo',
+        '<div class="esc-listo">' +
+          '<span class="material-symbols-rounded">campaign</span>' +
+          '<p>Todo listo. Cuando quiera, pida la primera producción.</p>' +
+        '</div>');
+    }
+
+    /* ── el historial: «Primera · Lucía, Segunda · Renato…» ─────────────── */
+    /*
+     * Solo lo YA cantado (lo manda el servidor). Se esconde durante la llamada —ahí
+     * todos miran el número— y cuando tendría una sola entrada que es la misma
+     * tarjeta que está en pantalla.
+     */
+    var eh = UI.id('escHistorial');
+    var verHist = fase !== 'llamada' && (hist.length >= 2 || (hist.length === 1 && !tarjeta));
+    UI.mostrar(eh, verHist);
+    if (verHist) {
+      var actual = tarjeta ? tarjeta.ordinal : 0;
+      if (pintarSi(eh, 'hist|' + conduce + '|' + actual + '|' +
+                       hist.map(function (h) { return h.ordinal + h.ejecutivo; }).join(','),
+                   historialHtml(hist, actual, conduce)) && conduce) {
+        Array.prototype.forEach.call(eh.querySelectorAll('[data-ordinal]'), function (b) {
+          b.onclick = function () { verDelHistorial(parseInt(b.getAttribute('data-ordinal'), 10)); };
+        });
+      }
+    }
+
+    /* ── los controles del anfitrión ─────────────────────────────────────── */
+    var dock = UI.id('escDock');
+    UI.mostrar(dock, conduce);
+    if (conduce) {
+      var enLlamada = fase === 'llamada';
+      if (pintarSi(dock, 'dock|' + enLlamada + '|' + (ronda.siguiente || 0), dockHtml(enLlamada, ronda.siguiente))) {
+        // Se le pasa el BOTÓN, no el evento: pedirProduccion lo deshabilita y le
+        // cambia el texto mientras la petición viaja.
+        UI.id('btnPedir').onclick = function () { pedirProduccion(this); };
+        UI.id('btnRepetirSirena').onclick = repetirSirena;
+      }
+    }
+  }
+
+  /** El anfitrión toca un nombre del historial: vuelve a mostrar esa tarjeta, solo en su pantalla. */
+  function verDelHistorial(n) {
+    var ronda = (S.estado && S.estado.ronda) || {};
+    var deAhora = ronda.fase === 'reveal' && ronda.itemActual && ronda.itemActual.ordinal === n;
+    S.verOrdinal = deAhora ? null : n;
+    renderEscenario();
+  }
+
+  /*
+   * LA TARJETA DEL DESTAPE.
+   *
+   * La jerarquía la pide la proyección (se ve por Meet, comprimida): primero QUIÉN
+   * —nombre y foto en grande—, después QUÉ fue —MATRÍCULA o ABONO— y el número en el
+   * rótulo de arriba. El plan, el usuario, el titular y la ciudad van en segundo
+   * plano.
+   *
+   * ⚠️ Lo que no vino, no se pinta: una caja vacía proyectada se lee como que el
+   * portal perdió el dato. (El plan rápido del CRM no pide el usuario, y una carga a
+   * mano puede no traer titular.)
+   *
+   * 🔴 El teléfono NO está: el servidor no lo manda (`tarjetaDe_`), y esto se proyecta.
+   */
+  function tarjetaHtml(t) {
+    var esMat = t.tipo === 'matricula';
+    var usuarios = [t.alumno, t.alumno2].filter(function (x) { return !!x; });
+    var cajas = '';
+    if (usuarios.length) {
+      cajas += '<div class="td-caja"><p class="td-etq">' + (usuarios.length > 1 ? 'Usuarios' : 'Usuario') + '</p>' +
+        '<p class="td-valor" id="celUsuario">' + usuarios.map(UI.esc).join('<br>') + '</p></div>';
+    }
+    if (t.titular) {
+      cajas += '<div class="td-caja"><p class="td-etq">Titular</p>' +
+        '<p class="td-valor" id="celTitular">' + UI.esc(t.titular) + '</p></div>';
+    }
+    return '<article class="tarjeta-destape' + (esMat ? '' : ' es-abono') + '" id="celebracion">' +
+      '<div class="td-persona">' +
+        '<div class="td-foto" id="celFoto">' + UI.avatar(t.foto, t.ejecutivo, 'avatar-td') +
+          (esMat ? '<span class="td-medalla"><span class="material-symbols-rounded fill">star</span></span>' : '') +
+        '</div>' +
+        '<p class="td-cargo" id="celCargo">' + UI.esc(t.cargo || '') + '</p>' +
+        '<h3 class="td-nombre" id="celNombre">' + UI.esc(t.ejecutivo || '') + '</h3>' +
+      '</div>' +
+      '<div class="td-datos">' +
+        '<div class="td-cabeza">' +
+          '<span class="td-tipo" id="celTipo">' + (esMat ? 'MATRÍCULA' : 'ABONO') + '</span>' +
+          (t.hora ? '<span class="td-hora"><span class="material-symbols-rounded">schedule</span>' +
+                    UI.esc(t.hora) + '</span>' : '') +
+        '</div>' +
+        (t.plan ? '<div class="td-caja td-caja-plan"><p class="td-etq">Plan</p>' +
+                  '<p class="td-plan" id="celPlan">' + UI.esc(t.plan) + '</p></div>' : '') +
+        (cajas ? '<div class="td-par">' + cajas + '</div>' : '') +
+        (t.ciudad ? '<p class="td-ciudad" id="celCiudad"><span class="material-symbols-rounded">location_on</span>' +
+                    UI.esc(t.ciudad) + '</p>' : '') +
+      '</div>' +
+    '</article>';
+  }
+
+  function historialHtml(hist, actual, conduce) {
+    var chips = hist.map(function (h) {
+      var nombre = String(h.ejecutivo || '').split(' ')[0];
+      var palabra = ordinalTxt(h.ordinal).replace(/^LA /, '');
+      var cont = UI.avatar(h.foto, h.ejecutivo, 'avatar-mini') +
+        '<span>' + UI.esc(palabra.charAt(0) + palabra.slice(1).toLowerCase()) + ' · ' + UI.esc(nombre) + '</span>';
+      var cls = 'eh-chip' + (h.ordinal === actual ? ' actual' : '');
+      // Solo el anfitrión puede volver a mostrar una: es SU pantalla la que se proyecta.
+      return conduce
+        ? '<button type="button" class="' + cls + '" data-ordinal="' + h.ordinal + '">' + cont + '</button>'
+        : '<span class="' + cls + '">' + cont + '</span>';
+    }).join('');
+    return '<span class="eh-titulo"><span class="material-symbols-rounded">emoji_events</span> Historial</span>' +
+      '<div class="eh-chips">' + chips + '</div>';
+  }
+
+  /*
+   * LOS CONTROLES DEL ANFITRIÓN: dos botones y el recordatorio del audio.
+   *
+   * ⚠️ El botón dice SIEMPRE «Pedir producción», nunca «Siguiente» —ni siquiera
+   * cuando ya hubo destapes—: un «siguiente» delataría que queda otra (decisión 07).
+   * El número de abajo («la cuarta») no delata nada: con el pozo vacío la llamada
+   * también tiene número. Sin número conocido (`siguiente` 0) no se muestra.
+   *
+   * 🔴 EL RECORDATORIO DEL AUDIO, porque sin él el fallo es mudo: el sonido sale
+   * SOLO de esta máquina y les llega a los demás por Meet únicamente si comparte la
+   * PESTAÑA con «También compartir el audio». Va en ámbar, NUNCA en verde: el portal
+   * no puede saber si el audio se está compartiendo, así que no puede mostrarlo
+   * como un estado confirmado.
+   */
+  function dockHtml(enLlamada, siguiente) {
+    return '<button type="button" class="btn-pedir" id="btnPedir"' + (enLlamada ? ' disabled' : '') + '>' +
+        '<span class="material-symbols-rounded">campaign</span>' +
+        '<span class="bp-txt"><strong>' + (enLlamada ? 'Llamada en curso…' : 'Pedir producción') + '</strong>' +
+          (!enLlamada && siguiente ? '<small>(' + UI.esc(ordinalMin(siguiente)) + ')</small>' : '') +
+        '</span>' +
+      '</button>' +
+      '<button type="button" class="btn" id="btnRepetirSirena">' +
+        '<span class="material-symbols-rounded">volume_up</span> Repetir sirena</button>' +
+      '<p class="aviso-audio" id="avisoAudio">' +
+        '<span class="material-symbols-rounded">volume_up</span>' +
+        '<span>¿Compartió la pestaña con audio? En Meet, comparta <strong>esta pestaña</strong> ' +
+        'y tilde «También compartir el audio».</span></p>';
   }
 
   function renderAsistencia() {
@@ -2131,48 +2483,20 @@ var Sala = (function () {
       .then(function () { latiendo = false; });
   }
 
-  /* ── celebración ───────────────────────────────────────────────────── */
+  /* ── festejo ───────────────────────────────────────────────────────── */
 
-  function celebrar(item) {
-    var esMat = item.tipo === 'matricula';
-    var ov = UI.id('celebracion');
-    UI.id('celFoto').innerHTML = UI.avatar(item.foto, item.ejecutivo, 'avatar-cel') +
-      '<span class="cel-insignia">' + (esMat ? '🏆' : '💰') + '</span>';
-    UI.id('celTipo').textContent = esMat ? 'MATRÍCULA' : 'ABONO';
-    UI.id('celNombre').textContent = item.ejecutivo || '';
-    UI.id('celCargo').textContent = item.cargo || '';
-
-    /*
-     * El detalle de la matrícula: el usuario y de dónde es (decisión 06 del plan).
-     *
-     * ⚠️ Se esconde entero si no vino nada. Vacío es honesto —el plan rápido del
-     * CRM no pide los datos del estudiante— pero una línea en blanco proyectada se
-     * lee como que el portal perdió el dato.
-     */
-    var det = [item.alumno, item.ciudad].filter(function (x) { return !!x; }).join(' · ');
-    UI.id('celDetalle').textContent = det;
-    UI.mostrar(UI.id('celDetalle'), !!det);
-    UI.id('celCaja').style.setProperty('--acento-cel', esMat ? 'var(--ambar)' : 'var(--verde)');
-    UI.mostrar(ov, true);
-    // Solo en la máquina del anfitrión: de ahí viaja por Meet (ver sonarSiAnfitrion).
-    // El confeti sí sale en todas: es de la pantalla de cada uno, no del parlante.
-    sonarSiAnfitrion(function () { Audio_.tocar(item.tipo); });
-    Confeti.tirar(item.tipo);
-    S.ultimoItem = item;
-  }
-
-  function cerrarCelebracion() { UI.mostrar(UI.id('celebracion'), false); }
+  /*
+   * ⚠️ Acá vivían `celebrar` y `cerrarCelebracion`, que abrían y cerraban el
+   * overlay oscuro del destape. Se fueron en sep 2026: la tarjeta la pinta el
+   * escenario (`renderEscenario`) y se queda; el sonido y el confeti los dispara
+   * `detectarDestape`.
+   */
 
   function repetirSirena() { if (S.ultimoItem) { Audio_.tocar(S.ultimoItem.tipo); Confeti.tirar(S.ultimoItem.tipo); } }
 
   return {
     entrar: entrar, salir: salir,
     activa: function () { return !!S.sala; },
-    /* Los dos datos que `Pantalla` necesita para decidir si el panel arranca
-       abierto o limpio. Se preguntan; no se copian, para que no haya una segunda
-       versión del estado dando vueltas. */
-    soyAnfitrion: function () { return !!(S.estado && S.estado.soyAnfitrion); },
-    hayRonda: function () { return hayShow(S.estado); },
     alVolverAlFrente: alVolverAlFrente,
     alEntrarAReunion: alEntrarAReunion,
     /*
@@ -2182,7 +2506,6 @@ var Sala = (function () {
      * Sin esto, la persona carga y el panel sigue diciendo que no tiene nada.
      */
     repintarFestejo: function () { if (S.estado) renderFestejo(); },
-    cerrarCelebracion: cerrarCelebracion,
     repetirSirena: repetirSirena
   };
 })();
@@ -2222,7 +2545,7 @@ var Pantalla = (function () {
     // Idempotente: `fullscreenchange` puede llegar más de una vez estando ya
     // maximizado, y mudar dos veces dejaría `guardados` con entradas repetidas.
     if (guardados.length) return;
-    ['toasts', 'celebracion'].forEach(function (id) {
+    ['toasts'].forEach(function (id) {
       var el = document.getElementById(id);
       if (!el) return;
       guardados.push({ el: el, padre: el.parentNode });
@@ -2271,30 +2594,22 @@ var Pantalla = (function () {
 
   /*
    * ════════════════════════════════════════════════════════════════════════
-   * EL PANEL: pantalla limpia por defecto, y se abre solo cuando hay show
+   * EL PANEL: en pantalla completa arranca ESCONDIDO para todos (sep 2026)
    * ════════════════════════════════════════════════════════════════════════
    *
-   * Decisión del dueño (ago 2026). En pantalla completa —que es como se proyecta
-   * la reunión— el panel arranca ESCONDIDO: se ve el video y nada más.
+   * En pantalla completa —que es como se proyecta la reunión— se ve el ESCENARIO:
+   * la llamada, la tarjeta y, para el anfitrión, sus controles. El panel (el pozo,
+   * la asistencia, el anfitrión) queda detrás del ojito.
    *
-   * 🔴 Con UNA excepción: el ANFITRIÓN arranca con el panel abierto. El botón de
-   * "Pedir producción" vive ahí adentro; si a él también le arrancara limpio,
-   * tendría que acordarse de destapar el panel para poder abrir la ronda, delante
-   * de toda la filial.
+   * ⚠️ Hasta sep 2026 el panel se abría SOLO al empezar la ronda y al anfitrión le
+   * arrancaba abierto: la llamada y el botón de pedir vivían ADENTRO del panel, y
+   * sin abrirlo nadie veía la cuenta. Desde que viven en el escenario, abrirlo en
+   * plena ceremonia solo le achicaría a la sala la tarjeta proyectada. Si alguien
+   * lo abre a mano, se queda abierto y el escenario le deja lugar al costado.
    *
-   * Y cuando el show empieza, el panel se abre SOLO para todos (ver
-   * `abrirPorRonda`, llamado desde `Sala.aplicar`), porque si no, quien lo tenía
-   * escondido no ve ni la cuenta regresiva ni los botones de producción.
-   *
-   * ⚠️ Nada de esto se guarda entre sesiones. Alcanzaría con haberlo dejado
-   * abierto una vez para que apareciera proyectado en la reunión siguiente sin que
-   * nadie lo pidiera; mismo criterio que el check de agendamiento cruzado del
-   * Tablero, que también arranca apagado a propósito.
+   * ⚠️ Nada de esto se guarda entre sesiones: alcanzaría con haberlo dejado abierto
+   * una vez para que apareciera proyectado en la reunión siguiente.
    */
-  var previoRonda = null;      // cómo estaba el panel ANTES del show (null = no hay show)
-  var manualEnRonda = false;   // tocó el ojito DURANTE el show: su decisión gana
-  var manualDesdeEntrar = false;  // tocó el ojito desde que entró a pantalla completa
-
   function panelOculto() {
     var el = elemento();
     return !!(el && el.classList.contains('panel-oculto'));
@@ -2313,85 +2628,20 @@ var Pantalla = (function () {
     }
   }
 
-  function alternarPanel() {
-    ponerPanel(!panelOculto());
-    /* Si lo tocó con el show en curso, manda él: al terminar la ronda no se le
-       mueve la pantalla por debajo. Lo automático está para el que no hizo nada. */
-    if (previoRonda !== null) manualEnRonda = true;
-    manualDesdeEntrar = true;
-  }
-
-  /**
-   * 🔴 Se volvió anfitrión DESPUÉS de entrar a pantalla completa.
-   *
-   * Al entrar a una sala libre, la toma automática tarda un viaje al servidor,
-   * así que quien aprieta pantalla completa enseguida todavía figura como "no
-   * anfitrión" y le arranca la pantalla limpia — sin el botón de "Pedir
-   * producción", que es justo lo que vino a hacer. Le pasó al test del teléfono
-   * antes que a nadie, y en la reunión iba a pasar igual.
-   *
-   * ⚠️ Solo si NO tocó el ojito desde que entró: si lo cerró a propósito, no se
-   * le vuelve a abrir la pantalla por debajo.
-   */
-  function alAscenderAAnfitrion() {
-    if (!activa() || manualDesdeEntrar || previoRonda !== null) return;
-    ponerPanel(false);
-  }
-
-  /** Arranca el show: se abre el panel para todos, guardando a dónde volver. */
-  function abrirPorRonda() {
-    if (!activa()) return;                 // fuera de pantalla completa el panel ya se ve
-    if (previoRonda === null) previoRonda = panelOculto();
-    manualEnRonda = false;
-    ponerPanel(false);
-  }
-
-  /** Terminó el show: vuelve a como estaba, salvo que la persona haya decidido. */
-  function cerrarPorRonda() {
-    var prev = previoRonda, manual = manualEnRonda;
-    previoRonda = null;
-    manualEnRonda = false;
-    if (!activa() || prev === null || manual) return;
-    ponerPanel(prev);
-  }
-
-  /**
-   * Estado del panel al ENTRAR a pantalla completa.
-   *
-   * ⚠️ Si justo hay un show en curso se abre igual, y se anota que al terminar hay
-   * que volver al default. Sin esto, entrar a pantalla completa en mitad de una
-   * ronda dejaba la pantalla limpia —o sea, sin la cuenta regresiva— que es
-   * exactamente lo que este cambio viene a evitar.
-   */
-  function arrancarPanel() {
-    var limpio = !Sala.soyAnfitrion();
-    manualEnRonda = false;
-    manualDesdeEntrar = false;
-    if (Sala.hayRonda()) {
-      previoRonda = limpio;
-      ponerPanel(false);
-    } else {
-      previoRonda = null;
-      ponerPanel(limpio);
-    }
-  }
+  function alternarPanel() { ponerPanel(!panelOculto()); }
 
   function alCambiar() {
     var el = elemento();
     // El icono lo alterna el CSS con `:fullscreen`: no hay estado que sincronizar.
     if (activa() && el) {
       mudar(el);
-      arrancarPanel();
+      ponerPanel(true);
     } else {
       devolver();
       // Al salir, el panel vuelve a ser una columna del layout: dejarlo escondido
       // dejaría un hueco al costado y ningún botón a la vista para recuperarlo
       // (el de esconderlo solo se ve en pantalla completa).
       if (el) el.classList.remove('panel-oculto');
-      // Y se olvida el show en curso: si vuelve a entrar, `arrancarPanel` decide
-      // otra vez desde cero. Guardarlo sería arrastrar un estado que ya no aplica.
-      previoRonda = null;
-      manualEnRonda = false;
     }
   }
 
@@ -2415,8 +2665,6 @@ var Pantalla = (function () {
   return {
     alternar: alternar, alternarPanel: alternarPanel,
     alCambiar: alCambiar, activa: activa, apagar: apagar,
-    abrirPorRonda: abrirPorRonda, cerrarPorRonda: cerrarPorRonda,
-    alAscenderAAnfitrion: alAscenderAAnfitrion,
     panelOculto: panelOculto,
     ajustarDisponibilidad: ajustarDisponibilidad
   };
@@ -3156,7 +3404,6 @@ var App = (function () {
     UI.id('btnRecargarAsistencia').addEventListener('click', Asistencia.cargar);
     UI.id('btnGuardarApi').addEventListener('click', Config.guardar);
     UI.id('btnProbarApi').addEventListener('click', Config.probar);
-    UI.id('btnCerrarCel').addEventListener('click', Sala.cerrarCelebracion);
     UI.id('btnPantalla').addEventListener('click', Pantalla.alternar);
     UI.id('btnPanel').addEventListener('click', Pantalla.alternarPanel);
     /*
@@ -3173,7 +3420,6 @@ var App = (function () {
       if (!document.hidden) Sala.alVolverAlFrente();
     });
     Pantalla.ajustarDisponibilidad();
-    UI.id('btnRepetirSirena').addEventListener('click', Sala.repetirSirena);
 
     UI.id('linkConfig').addEventListener('click', function (ev) { ev.preventDefault(); abrirConfig(); });
     // Delegado sobre la tabla: se repinta entera en cada marcado, así que los botones
