@@ -907,7 +907,20 @@ var UI = (function () {
    planilla del CRM. Acá solo se pide y se muestra.
    ══════════════════════════════════════════════════════════════════════════ */
 var Pozo = (function () {
-  var P = { pendientes: [], destapadas: [], abierto: false, enviando: false, recientes: null, recientesError: '' };
+  /*
+   * ══════════════════════════════════════════════════════════════════════════
+   * MI PRODUCCIÓN (sep 2026, paso 3): el pozo vive en la PÁGINA, no en un cuadro.
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * Orden de lo más rápido a lo más lento (decisión del dueño): lo que ya está en el
+   * pozo; las listas del CRM, que se cargan con un toque; buscar por teléfono; y la
+   * carga a mano, plegada.
+   *
+   * ⚠️ Solo se repintan las LISTAS (#pozoCuerpo, #pozoListas, #pozoBuscarRes). Los
+   * formularios son fijos en el HTML: repintarlos le borraría a la persona lo que
+   * está escribiendo cada vez que llega un sondeo.
+   */
+  var P = { pendientes: [], destapadas: [], enviando: false, recientes: null, recientesError: '', buscado: null };
 
   function cuantas() { return P.pendientes.length; }
 
@@ -915,31 +928,22 @@ var Pozo = (function () {
     if (!pozo) return;
     P.pendientes = pozo.pendientes || [];
     P.destapadas = pozo.destapadas || [];
-    if (P.abierto) pintar();
+    pintarMio();
     Sala.repintarFestejo();
   }
 
-  /** Refresca desde el servidor. Se llama al entrar a una sala y tras cada cambio. */
   function refrescar() {
     return API.get({ accion: 'pozoMio', token: Sesion.token })
       .then(function (r) { if (r && r.ok) aplicar(r.pozo); })
       .catch(function () { /* el pozo no puede tirar abajo la sala */ });
   }
 
-  /*
-   * ⚠️ Las del CRM se piden al ABRIR, no en cada sondeo: es una lectura de otra
-   * planilla —la del CRM— y solo hace falta cuando la persona va a cargar. En el
-   * sondeo serían decenas de lecturas por minuto de una hoja ajena.
-   */
-  /*
-   * ⚠️ Un fallo NO se pinta como lista vacía. "No hay ninguna sin cargar" cuando en
-   * realidad no se pudo leer el CRM le dice a la persona que ya cargó todo — y se
-   * queda sin cantar una venta que sí tenía.
-   */
+  /* ⚠️ Si no se pudo leer el CRM, la lista LO DICE en vez de mostrarse vacía: "no
+     hay ninguna sin cargar" le decía a la persona que ya había cargado todo. */
   function pedirRecientes() {
     P.recientes = null;
     P.recientesError = '';
-    if (P.abierto) pintar();
+    pintarListas();
     return API.get({ accion: 'pozoRecientes', token: Sesion.token })
       .then(function (r) {
         if (r && r.ok) { P.recientes = r.items || []; return; }
@@ -950,68 +954,63 @@ var Pozo = (function () {
         P.recientes = [];
         P.recientesError = (e && e.message) || 'Error de conexión.';
       })
-      .then(function () { if (P.abierto) pintar(); });
+      .then(pintarListas);
   }
 
-  function abrir() { P.abierto = true; UI.mostrar(UI.id('pozoModal'), true); pintar(); pedirRecientes(); }
-  function cerrar() { P.abierto = false; UI.mostrar(UI.id('pozoModal'), false); }
+  /** Al entrar a una sala: lo mío y las listas del CRM. */
+  function entrar() {
+    P.buscado = null;
+    pintarBuscado();
+    refrescar();
+    pedirRecientes();
+  }
 
   function chip(tipo) {
-    return '<span class="chip ' + (tipo === 'matricula' ? 'chip-ambar' : 'chip-verde') + '">' +
+    return '<span class="chip ' + (tipo === 'matricula' ? 'chip-verde' : 'chip-ambar') + '">' +
       (tipo === 'matricula' ? 'Matrícula' : 'Abono') + '</span>';
   }
 
-  function pintar() {
+  /** Una tarjeta de producción: tipo, plan, usuario(s), titular, ciudad y teléfono. */
+  function tarjeta(it, derecha) {
+    var usuarios = [it.alumno, it.alumno2].filter(function (x) { return !!x; });
+    var plan = it.planTxt !== undefined ? it.planTxt : it.plan;
+    return '<div class="pozo-tarjeta">' +
+      '<div class="pt-cab">' + chip(it.tipo) +
+        (plan ? '<span class="pt-plan">' + UI.esc(plan) + '</span>' : '') +
+        '<span class="pt-der">' + (derecha || '') + '</span>' +
+      '</div>' +
+      '<p class="pt-usuario"><span>' + (usuarios.length > 1 ? 'Usuarios' : 'Usuario') + ':</span> ' +
+        (usuarios.length ? UI.esc(usuarios.join(' y ')) : '<em>(sin nombre del usuario)</em>') + '</p>' +
+      (it.titular ? '<p class="pt-linea">Titular: ' + UI.esc(it.titular) + '</p>' : '') +
+      '<p class="pt-linea">' + [it.ciudad ? UI.esc(it.ciudad) : '', it.telefono ? 'Tel: ' + UI.esc(it.telefono) : '']
+        .filter(function (x) { return !!x; }).join(' · ') + '</p>' +
+    '</div>';
+  }
+
+  /** Mi producción en el pozo: lo que espera (con Quitar) y lo que se cantó hoy. */
+  function pintarMio() {
     var c = UI.id('pozoCuerpo');
     if (!c) return;
-    var html = '<h4>Esperando turno</h4>';
-
-    html += P.pendientes.length
-      ? P.pendientes.map(function (it) {
-          return '<div class="pozo-fila">' + chip(it.tipo) +
-            '<span class="pozo-quien">' + UI.esc(it.alumno || '(sin nombre del usuario)') +
-              (it.ciudad ? ' · ' + UI.esc(it.ciudad) : '') + '</span>' +
-            '<span class="pozo-tel">' + UI.esc(it.telefono || '') + '</span>' +
-            '<button class="btn" data-quitar="' + UI.esc(it.id) + '" title="Sacar del pozo">' +
-              '<span class="material-symbols-rounded">cancel</span></button>' +
-          '</div>';
-        }).join('')
-      : '<p class="pozo-vacio">Nada cargado todavía.</p>';
-
-    if (P.destapadas.length) {
-      html += '<h4>Ya se cantó hoy</h4>' + P.destapadas.map(function (it) {
-        return '<div class="pozo-fila pozo-hecha">' +
-          '<span class="material-symbols-rounded">check_circle</span>' +
-          '<span class="pozo-quien">' + UI.esc(it.alumno || '(sin nombre del usuario)') + '</span></div>';
-      }).join('');
-    }
-
-    /*
-     * ⚠️ Las del CRM se OFRECEN, no se cargan solas. Cargarlas automáticamente
-     * pondría en el festejo algo que la persona no pidió — y una venta caída o mal
-     * registrada saldría proyectada igual, delante de toda la filial.
-     */
-    html += '<h4>Sus matrículas de las últimas 48 h</h4>';
-    if (P.recientes === null) html += '<p class="pozo-vacio">Buscando en el CRM…</p>';
-    else if (P.recientesError) {
-      html += '<p class="pozo-vacio pozo-error">No se pudo revisar el CRM: ' + UI.esc(P.recientesError) +
-        ' Puede cargarla a mano abajo.</p>';
-    }
-    else if (!P.recientes.length) html += '<p class="pozo-vacio">No hay ninguna sin cargar.</p>';
-    else html += P.recientes.map(function (it) {
-      return '<div class="pozo-fila">' + chip(it.tipo) +
-        '<span class="pozo-quien">' + UI.esc(it.alumno || it.titular || '(sin nombre)') +
-          (it.ciudad ? ' · ' + UI.esc(it.ciudad) : '') + '</span>' +
-        '<span class="pozo-tel">' + UI.esc(it.telefonoCorto || '') + '</span>' +
-        '<button class="btn btn-primario" data-toque="' + UI.esc(it.telefono) + '"' +
-          ' data-tipo="' + UI.esc(it.tipo) + '">Cargar</button>' +
-      '</div>';
+    var html = P.pendientes.map(function (it) {
+      return tarjeta(it, '<span class="chip chip-azul">En el pozo</span>' +
+        '<button class="btn pt-quitar" data-quitar="' + UI.esc(it.id) + '" title="Sacar del pozo">' +
+          '<span class="material-symbols-rounded">cancel</span> Quitar</button>');
+    }).join('') + P.destapadas.map(function (it) {
+      return tarjeta(it, '<span class="chip chip-verde"><span class="material-symbols-rounded">check_circle</span> ' +
+        'Cantada' + (it.cantada ? ' · ' + UI.esc(it.cantada) : '') + '</span>');
     }).join('');
-
-    c.innerHTML = html;
+    c.innerHTML = html || '<p class="pozo-vacio">No tiene producción cargada.</p>';
     Array.prototype.forEach.call(c.querySelectorAll('[data-quitar]'), function (b) {
       b.onclick = function () { quitar(b.getAttribute('data-quitar'), b); };
     });
+  }
+
+  function botonCargar(it) {
+    return '<button class="btn btn-verde btn-bloque pt-cargar" data-toque="' + UI.esc(it.telefono) + '"' +
+      ' data-tipo="' + UI.esc(it.tipo) + '"><span class="material-symbols-rounded">add_circle</span> Cargar al pozo</button>';
+  }
+
+  function conectarToques(c) {
     Array.prototype.forEach.call(c.querySelectorAll('[data-toque]'), function (b) {
       b.onclick = function () {
         cargar({ tipo: b.getAttribute('data-tipo'), telefono: b.getAttribute('data-toque') }, b);
@@ -1019,12 +1018,48 @@ var Pozo = (function () {
     });
   }
 
-  /*
-   * 🔴 Cargar ESCRIBE, así que no se reintenta sola (ver POST_REPETIBLE) — y por
-   * eso mismo el doble clic se frena acá: dos POST salen antes de que vuelva el
-   * primero, y esa persona quedaría ocupando dos turnos del festejo mientras el
-   * resto de la sala espera sin entender por qué.
-   */
+  /** Listas para cantar: lo del CRM de las últimas 48 h que TODAVÍA no está en el pozo. */
+  function pintarListas() {
+    var c = UI.id('pozoListas');
+    if (!c) return;
+    var html;
+    if (P.recientes === null) html = '<p class="pozo-vacio">Buscando en el CRM…</p>';
+    else if (P.recientesError) {
+      html = '<p class="pozo-vacio pozo-error">No se pudo revisar el CRM: ' + UI.esc(P.recientesError) +
+        ' Puede buscarla por teléfono o cargarla a mano.</p>';
+    }
+    else if (!P.recientes.length) html = '<p class="pozo-vacio">No hay ninguna sin cargar.</p>';
+    else html = P.recientes.map(function (it) { return tarjeta(it) + botonCargar(it); }).join('');
+    c.innerHTML = html;
+    conectarToques(c);
+  }
+
+  /** Buscar por teléfono: muestra lo que el CRM tiene, ANTES de cargar. */
+  function buscar() {
+    var tel = UI.id('pozoBuscarTel').value;
+    P.buscado = { cargando: true };
+    pintarBuscado();
+    API.get({ accion: 'pozoBuscar', token: Sesion.token, telefono: tel })
+      .then(function (r) {
+        P.buscado = r && r.ok ? { item: r.encontrado } : { error: (r && r.message) || 'No se encontró.' };
+      })
+      .catch(function (e) { P.buscado = { error: (e && e.message) || 'Error de conexión.' }; })
+      .then(pintarBuscado);
+  }
+
+  function pintarBuscado() {
+    var c = UI.id('pozoBuscarRes');
+    if (!c) return;
+    var b = P.buscado;
+    if (!b) { c.innerHTML = ''; return; }
+    if (b.cargando) { c.innerHTML = '<p class="pozo-vacio">Buscando…</p>'; return; }
+    if (b.error) { c.innerHTML = '<p class="pozo-vacio pozo-error">' + UI.esc(b.error) + '</p>'; return; }
+    c.innerHTML = tarjeta(b.item) + (b.item.yaCargada
+      ? '<p class="pozo-vacio">Ya está en su pozo, esperando turno.</p>'
+      : botonCargar(b.item));
+    conectarToques(c);
+  }
+
   function cargar(datos, boton) {
     if (P.enviando) return Promise.resolve(false);
     P.enviando = true;
@@ -1032,17 +1067,15 @@ var Pozo = (function () {
     return API.post({
       accion: 'pozoCargar', token: Sesion.token,
       tipo: datos.tipo, telefono: datos.telefono,
-      alumno: datos.alumno || '', ciudad: datos.ciudad || ''
+      alumno: datos.alumno || '', alumno2: datos.alumno2 || '', titular: datos.titular || '',
+      ciudad: datos.ciudad || '', plan: datos.plan || '', usuarios: datos.usuarios || ''
     }).then(function (r) {
-      /*
-       * ⚠️ El rechazo dura 7 s, no los 3,8 de siempre: acá el servidor explica QUÉ
-       * hacer —"ese lead está en EN SEGUIMIENTO, se cambia en el CRM"— y un aviso
-       * que se va antes de que lo lean no avisó nada.
-       */
       if (!r || !r.ok) { UI.toast((r && r.message) || 'No se pudo cargar.', 'error', 7000); return false; }
       UI.toast('Cargada. Se canta cuando el anfitrión pida producción.', 'ok');
       if (r.aviso) UI.toast(r.aviso, 'info', 6000);
       aplicar(r.pozo);
+      P.buscado = null;
+      pintarBuscado();
       pedirRecientes();
       return true;
     }).catch(function (e) {
@@ -1050,7 +1083,7 @@ var Pozo = (function () {
       return false;
     }).then(function (cargada) {
       P.enviando = false;
-      if (boton) boton.disabled = false;
+      if (boton && boton.isConnected) boton.disabled = false;
       return cargada === true;
     });
   }
@@ -1066,38 +1099,61 @@ var Pozo = (function () {
         pedirRecientes();
       })
       .catch(function (e) { UI.toast((e && e.message) || 'Error de conexión.', 'error'); })
-      .then(function () { P.enviando = false; if (boton) boton.disabled = false; });
+      .then(function () { P.enviando = false; if (boton && boton.isConnected) boton.disabled = false; });
   }
 
-  /** Lo cargado a mano: para quien todavía no llenó el formulario de matrícula. */
+  var marcado = function (nombre) { var el = UI.$('input[name="' + nombre + '"]:checked'); return el ? el.value : ''; };
+
+  /** Con «2x1» aparece el segundo usuario: el CRM guarda uno solo, el otro lo escribe quien carga. */
+  function alCambiarPlan() {
+    var dos = marcado('pozoPlan') === '2';
+    UI.mostrar(UI.id('pozoAlumno2Campo'), dos);
+    UI.id('pozoAlumnoEtq').firstChild.textContent = dos ? 'Usuario 1 ' : 'Usuario ';
+  }
+
+  /*
+   * ⚠️ Lo que escribió la persona QUEDA en el formulario si la carga se rechaza: que
+   * corrija solo lo que haga falta. Se limpia recién cuando se cargó.
+   */
   function cargarDelForm() {
-    var tipo = UI.$('input[name="pozoTipo"]:checked');
+    var campos = ['pozoTel', 'pozoAlumno', 'pozoAlumno2', 'pozoTitular', 'pozoCiudad'];
+    var usuarios = marcado('pozoPlan') || '1';
     cargar({
-      tipo: tipo ? tipo.value : '',
+      tipo: marcado('pozoTipo'),
       telefono: UI.id('pozoTel').value,
       alumno: UI.id('pozoAlumno').value,
-      ciudad: UI.id('pozoCiudad').value
+      alumno2: usuarios === '2' ? UI.id('pozoAlumno2').value : '',
+      titular: UI.id('pozoTitular').value,
+      ciudad: UI.id('pozoCiudad').value,
+      plan: marcado('pozoPlazo'),
+      usuarios: usuarios
     }, UI.id('btnPozoGuardar')).then(function (cargada) {
-      /*
-       * ⚠️ Se vacía SOLO si entró. Ante un rechazo ("ese lead está en ABONO", "está a
-       * nombre de otra persona") el aviso explica qué corregir, y borrar lo escrito
-       * obligaba a tipearlo todo de nuevo para corregir un solo dato.
-       */
       if (!cargada) return;
-      UI.id('pozoTel').value = '';
-      UI.id('pozoAlumno').value = '';
-      UI.id('pozoCiudad').value = '';
+      campos.forEach(function (id) { UI.id(id).value = ''; });
+    });
+  }
+
+  /** Los formularios fijos se conectan UNA vez, al arrancar. */
+  function conectar() {
+    UI.id('btnPozoGuardar').addEventListener('click', cargarDelForm);
+    UI.id('btnPozoBuscar').addEventListener('click', buscar);
+    UI.id('pozoBuscarTel').addEventListener('keydown', function (e) { if (e.key === 'Enter') buscar(); });
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="pozoPlan"]'), function (r) {
+      r.addEventListener('change', alCambiarPlan);
     });
   }
 
   return {
-    abrir: abrir, cerrar: cerrar, cuantas: cuantas,
-    refrescar: refrescar, cargarDelForm: cargarDelForm,
-    /* ⚠️ Al salir de la sala se limpia: el pozo es de la PERSONA, pero la pantalla
-       no puede quedar mostrando lo de la sesión anterior tras cerrar sesión. */
-    limpiar: function () { P.pendientes = []; P.destapadas = []; P.recientes = null; P.recientesError = ''; cerrar(); }
+    cuantas: cuantas, refrescar: refrescar, entrar: entrar, conectar: conectar,
+    /* ⚠️ Al salir de la sesión: la pantalla del pozo no puede quedar mostrando lo de
+       la sesión anterior. */
+    limpiar: function () {
+      P.pendientes = []; P.destapadas = []; P.recientes = null; P.recientesError = ''; P.buscado = null;
+      ['pozoCuerpo', 'pozoListas', 'pozoBuscarRes'].forEach(function (id) { var c = UI.id(id); if (c) c.innerHTML = ''; });
+    }
   };
 })();
+
 
 /* ══════════════════════════════════════════════════════════════════════════
    Sala — el corazón: polling, llamada y festejo
@@ -1148,6 +1204,7 @@ var Sala = (function () {
     S.verOrdinal = null;
     S.rondaVista = null;
     S.ultimoGolpe = null;
+    S.verif = null;
     // "Ya se decidió algo sobre esta sala en esta visita". Ver `autoTomarSala`.
     S.autoTomaResuelta = false;
     /*
@@ -1155,7 +1212,7 @@ var Sala = (function () {
      * hoja y el contenido solo cambia cuando esta persona carga o quita algo —o
      * cuando el anfitrión destapa, que ya trae su propio repintado.
      */
-    Pozo.refrescar();
+    Pozo.entrar();
     poll();
     /*
      * ⚠️ 250 ms y no 1 s. El tick solo trabaja durante la llamada (el resto del
@@ -1164,6 +1221,9 @@ var Sala = (function () {
      * cayera, y la cuenta de la pantalla proyectada sonaría a tropiezos.
      */
     S.timerTick = setInterval(tick, 250);
+    // Lo que dijo el jefe: al entrar y cada 3 min (el jefe revisa durante la reunión).
+    pedirVerif();
+    S.timerVerif = setInterval(pedirVerif, 3 * 60 * 1000);
   }
 
   function salir() {
@@ -1175,7 +1235,7 @@ var Sala = (function () {
     // se queda con la pestaña gritando "¡PRODUCCIÓN!" para siempre.
     tituloSegunRonda(false);
     Pozo.limpiar();
-    clearTimeout(S.timerPoll); clearInterval(S.timerTick); clearInterval(S.timerAsis);
+    clearTimeout(S.timerPoll); clearInterval(S.timerTick); clearInterval(S.timerAsis); clearInterval(S.timerVerif);
     S.timerPoll = S.timerTick = S.timerAsis = null;
     S.enReunion = false;
     // El redoble corre con su propio temporizador: salir en plena llamada lo dejaría
@@ -1450,9 +1510,9 @@ var Sala = (function () {
     if (ronda.enShow === false) return;
     var tipo = ronda.itemActual.tipo;
     // Solo en la máquina del anfitrión: de ahí viaja por Meet (ver sonarSiAnfitrion).
-    // El confeti sí sale en todas: es de la pantalla de cada uno, no del parlante.
-    sonarSiAnfitrion(function () { Audio_.destape(tipo); });
-    Confeti.tirar(tipo);
+    // Sonido Y confeti, los dos solo en la pantalla de quien conduce: es la que se
+    // proyecta. Los demás no ven la ceremonia en la suya (paso 3).
+    sonarSiAnfitrion(function () { Audio_.destape(tipo); Confeti.tirar(tipo); });
   }
 
   /* ── la llamada: «Preparando… ¡a la una! ¡a las dos! ¡a las tres!» ──── */
@@ -1865,50 +1925,17 @@ var Sala = (function () {
   }
 
   /*
-   * El bloque PRODUCCIÓN del panel: el pozo de cada uno, y nada más.
+   * El bloque MI PRODUCCIÓN: acá solo va el aviso de arriba. Las listas y los
+   * formularios los maneja el módulo `Pozo` (sep 2026, paso 3).
    *
-   * 🔴 Desde sep 2026 la llamada, la tarjeta y el botón de pedir viven en el
-   * ESCENARIO (`renderEscenario`). Acá quedó lo que es de cada persona: cuánto tiene
-   * cargado y el botón para cargar más.
+   * 🔴 CON LA SALA CERRADA IGUAL SE PUEDE CARGAR, y esto es el punto del pozo:
+   * existe para cargar ANTES de la reunión.
    */
   function renderFestejo() {
     var r = S.estado;
-    var cont = UI.id('festejoCuerpo');
-    /*
-     * 🔴 CUÁNTAS TIENE CARGADAS VA EN LA FIRMA, y sin eso el pozo no se ve.
-     *
-     * `pintarSi` compara esta firma y no repinta si es igual. Cargar una producción
-     * no cambia NADA del estado de la sala, así que sin este campo la persona carga,
-     * el servidor la guarda bien, y el panel sigue diciendo "No tiene producción
-     * cargada". Es la misma trampa que ya se había pisado con "ya anoté".
-     */
-    var firma = [r.sala.abierta, Pozo.cuantas()].join('|');
-
-    /*
-     * 🔴 CON LA SALA CERRADA IGUAL SE PUEDE CARGAR, y esto es el punto del pozo:
-     * existe para cargar ANTES de la reunión. Si el botón solo apareciera con la
-     * sala abierta, habría que esperar a que llegue el anfitrión.
-     */
-    var html = r.sala.abierta ? '' :
-      '<p style="font-size:13px;color:var(--txt-dim);margin-bottom:10px">' +
-      'El festejo empieza cuando el anfitrión abra la sala. Mientras tanto puede dejar ' +
-      'su producción cargada.</p>';
-    html += pozoHtml();
-    if (!pintarSi(cont, firma, html)) return;
-    if (UI.id('btnCargarProd')) UI.id('btnCargarProd').onclick = Pozo.abrir;
-  }
-
-  /** Lo que esta persona tiene esperando su turno, y el botón para cargar más. */
-  function pozoHtml() {
-    var n = Pozo.cuantas();
-    return '<div class="pozo-mini">' +
-      (n
-        ? '<span class="chip chip-verde"><span class="material-symbols-rounded">savings</span> ' +
-          n + ' esperando turno</span>'
-        : '<span style="font-size:13px;color:var(--txt-dim)">No tiene producción cargada.</span>') +
-      '<button class="btn btn-bloque" id="btnCargarProd" style="margin-top:10px">' +
-        '<span class="material-symbols-rounded">add_circle</span> Cargar producción</button>' +
-    '</div>';
+    pintarSi(UI.id('festejoCuerpo'), String(!!r.sala.abierta), r.sala.abierta ? '' :
+      '<p class="pozo-ayuda" style="margin-bottom:10px">El festejo empieza cuando el anfitrión abra la sala. ' +
+      'Mientras tanto puede dejar su producción cargada.</p>');
   }
 
 
@@ -1952,7 +1979,12 @@ var Sala = (function () {
     if (tarjeta) S.ultimoItem = tarjeta;   // lo que suena al apretar «Repetir sirena»
 
     var cierre = fase === 'fin' && !tarjeta;
-    var visible = fase === 'llamada' || !!tarjeta || cierre || conduce;
+    /*
+     * 🔴 SOLO QUIEN CONDUCE ve el escenario (decisión del dueño, 28-sep-2026, paso 3).
+     * Los demás miran la ceremonia por Meet, en la pantalla compartida del anfitrión:
+     * una segunda copia en su pantalla llega con 2-3 s de diferencia y compite con esa.
+     */
+    var visible = conduce;
     UI.mostrar(esc, visible);
     if (!visible) return;
 
@@ -2139,6 +2171,46 @@ var Sala = (function () {
         'y tilde «También compartir el audio».</span></p>';
   }
 
+  /*
+   * LO QUE DIJO SU JEFE de esta reunión (sep 2026, paso 3), debajo del estado.
+   *
+   *   · confirmada          → una línea: «✓ Confirmada por su jefe».
+   *   · marcada AUSENTE     → en rojo y con el MOTIVO: es lo único que la perjudica,
+   *                           y tiene que poder reclamar a tiempo.
+   *   · con OBSERVACIÓN     → la ve (decisión del dueño): es una devolución para
+   *                           mejorar, «mejore su iluminación».
+   *   · sin revisar         → NADA. No depende de la persona y solo la inquietaría.
+   *
+   * Lo trae un pedido aparte (`miVerificacion`), no el sondeo de la sala: lee la
+   * hoja de verificación, y el sondeo está escrito para no tocar planillas.
+   */
+  function verifHtml() {
+    var v = S.verif;
+    if (!v || !v.revisado) return '';
+    var obs = v.observacion
+      ? '<div class="asis-obs"><span class="material-symbols-rounded">edit_note</span><span>' +
+          '<strong>Observación de su jefe</strong> (' + UI.esc(v.por || '') +
+          (v.porCargo ? ' · ' + UI.esc(v.porCargo) : '') + '): «' + UI.esc(v.observacion) + '»</span></div>'
+      : '';
+    if (v.estado === 'AUSENTE') {
+      return '<div class="aviso aviso-error asis-verif"><span class="material-symbols-rounded">event_busy</span>' +
+        '<span><strong>Su jefe lo marcó ausente</strong>' +
+        (v.motivo ? '<br>Motivo: ' + UI.esc(v.motivo) : '') + '</span></div>' + obs;
+    }
+    return '<p class="asis-verif-ok"><span class="material-symbols-rounded">check_circle</span> Confirmada por su jefe</p>' + obs;
+  }
+
+  function pedirVerif() {
+    if (!S.sala) return;
+    API.get({ accion: 'miVerificacion', token: Sesion.token })
+      .then(function (r) {
+        if (!r || !r.ok || !S.sala) return;
+        S.verif = r.verif;
+        renderAsistencia();
+      })
+      .catch(function () { /* se reintenta en el próximo turno del temporizador */ });
+  }
+
   function renderAsistencia() {
     var cont = UI.id('asistenciaCuerpo');
     // `latirAsistencia` llama acá desde su respuesta: si mientras tanto se salió
@@ -2146,7 +2218,7 @@ var Sala = (function () {
     // TypeError sin decir nada, que es peor que el error mismo.
     if (!S.estado || !S.estado.sala) return;
     if (!S.estado.sala.abierta) {
-      cont.innerHTML = '<p style="font-size:13px;color:var(--txt-dim)">Se registra durante la reunión.</p>';
+      cont.innerHTML = '<p style="font-size:13px;color:var(--txt-dim)">Se registra durante la reunión.</p>' + verifHtml();
       return;
     }
     /*
@@ -2173,7 +2245,7 @@ var Sala = (function () {
             '<span class="material-symbols-rounded">verified</span>' +
             '<span><strong>Asistencia registrada</strong>' +
             (hIng ? '<br>Hora de ingreso: ' + UI.esc(hIng) + '.' : '') +
-            '</span></div>';
+            '</span></div>' + verifHtml();
       return;
     }
     /*
@@ -2202,7 +2274,7 @@ var Sala = (function () {
         (faltan != null
           ? (faltan <= 1 ? 'Falta menos de un minuto.' : 'Faltan ' + faltan + ' min.')
           : 'Contando…') +
-        '</span></div>';
+        '</span></div>' + verifHtml();
       return;
     }
 
@@ -2217,13 +2289,13 @@ var Sala = (function () {
         '<span class="material-symbols-rounded">hourglass_top</span>' +
         '<span>Se pausó: lo que lleva no se pierde. Vuelva a esta pantalla — ' +
         (faltan <= 1 ? 'falta menos de un minuto' : 'faltan ' + faltan + ' min') +
-        '.</span></div>';
+        '.</span></div>' + verifHtml();
       return;
     }
 
     cont.innerHTML = '<p style="font-size:13px;color:var(--txt-dim)">' +
       'Deje esta pantalla abierta ' + cuanto +
-      ' para que quede registrada su asistencia.</p>';
+      ' para que quede registrada su asistencia.</p>' + verifHtml();
   }
 
   /* ── acciones ──────────────────────────────────────────────────────── */
@@ -3398,8 +3470,7 @@ var App = (function () {
     UI.id('loginForm').addEventListener('submit', login);
     UI.id('btnSalir').addEventListener('click', salir);
     UI.id('btnTema').addEventListener('click', Tema.alternar);
-    UI.id('btnPozoCerrar').addEventListener('click', Pozo.cerrar);
-    UI.id('btnPozoGuardar').addEventListener('click', Pozo.cargarDelForm);
+    Pozo.conectar();
     UI.id('btnVolverSalas').addEventListener('click', function () { irA('dashboard'); });
     UI.id('btnRecargarAsistencia').addEventListener('click', Asistencia.cargar);
     UI.id('btnGuardarApi').addEventListener('click', Config.guardar);

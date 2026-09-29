@@ -1523,81 +1523,82 @@ tbody tr:hover { background: var(--surface); }
 .verif-texto { min-width: 170px; max-width: 100%; }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   EL POZO (sep 2026, Paso 5)
-   ══════════════════════════════════════════════════════════════════════════ */
+   MI PRODUCCIÓN — el pozo en la página (sep 2026, paso 3 del rediseño)
+   ══════════════════════════════════════════════════════════════════════════
 
-/* El resumen que va en el panel, debajo de "Pedir producción". */
-.pozo-mini { margin-top: var(--sp-3); }
-
-#pozoModal {
-  position: fixed; inset: 0; z-index: 80;
-  display: grid; place-items: center;
+   Dejó de ser un cuadro emergente: es el bloque principal de la vista del asesor,
+   a lo ancho, en dos columnas —lo mío a la izquierda; las listas, la búsqueda y la
+   carga a mano a la derecha— y una sola en el teléfono, en ese orden. */
+/* Arriba, su asistencia (con lo que dijo el jefe); después, su producción a lo ancho. */
+.bloque-asis { grid-column: 1 / -1; order: -2; }
+.bloque-pozo { grid-column: 1 / -1; order: -1; }
+.pozo-grilla {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+  gap: var(--sp-4);
+  align-items: start;
+}
+.pozo-col { display: grid; gap: var(--sp-3); min-width: 0; }
+.pozo-sec {
+  min-width: 0;
   padding: var(--sp-4);
-  background: var(--overlay);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  overflow-y: auto;
-}
-.pozo-caja {
-  width: min(560px, 100%);
-  max-height: calc(100vh - 2 * var(--sp-4));
-  overflow-y: auto;
-  padding: var(--sp-5);
-  border-radius: var(--r-xl);
-  border: 1px solid var(--borde-fuerte);
+  border: 1px solid var(--borde);
+  border-radius: var(--r-lg);
   background: var(--bg-elev);
-  box-shadow: var(--sombra-alta);
 }
-.pozo-cab { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-2); }
-.pozo-cab h3 { flex: 1; display: flex; align-items: center; gap: 9px; font-size: 19px; }
-.pozo-ayuda { color: var(--txt-dim); font-size: 13px; margin-bottom: var(--sp-4); }
-#pozoCuerpo h4, .pozo-form h4 {
-  font-size: 11.5px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
-  color: var(--txt-mute); margin: var(--sp-4) 0 var(--sp-2);
-}
+.pozo-sec h5 { font: 700 16px/1.25 var(--font-display); margin-bottom: 2px; }
+.pozo-ayuda { color: var(--txt-dim); font-size: 13px; margin-bottom: var(--sp-3); }
 .pozo-vacio { color: var(--txt-mute); font-size: 13px; }
 .pozo-vacio.pozo-error { color: var(--txt-rojo); }
 
-.pozo-fila {
-  display: flex; align-items: center; gap: var(--sp-2);
-  padding: 10px 12px;
+/* Una tarjeta de producción. ⚠️ Nada se recorta: el nombre del usuario es lo que
+   deja reconocer CUÁL es (a 390 px ya se pisó un «Lucía …» recortado). */
+.pozo-tarjeta {
+  padding: 12px 14px;
   border: 1px solid var(--borde);
   border-radius: var(--r-md);
   background: var(--surface);
-  margin-bottom: 6px;
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
 }
-.pozo-quien { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pozo-tel { font-size: 12.5px; color: var(--txt-mute); font-variant-numeric: tabular-nums; }
-/*
- * 🔴 EN EL TELÉFONO LA FILA SE PARTE EN DOS, y el nombre se queda con el renglón
- * entero.
- *
- * A 390 px los cuatro elementos en una línea dejaban al nombre en "Lucía …" —
- * y el nombre del usuario es justo lo que deja reconocer CUÁL venta es. Sacar el
- * teléfono enmascarado para hacerle lugar tampoco servía: está ahí para
- * distinguir dos ventas de la misma persona.
- *
- * Lo encontró una captura, no un check: el ancho de la caja estaba perfecto (no
- * hay desborde) y el texto se recortaba en silencio.
- */
-@media (max-width: 460px) {
-  .pozo-fila { flex-wrap: wrap; }
-  .pozo-quien { flex: 1 0 100%; order: -1; white-space: normal; }
-  .pozo-fila .btn { margin-left: auto; }
-}
+.pt-cab { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.pt-plan { font: 600 13.5px/1.2 var(--font-display); color: var(--txt); }
+.pt-der { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pt-der .chip .material-symbols-rounded { font-size: 15px; }
+.pt-usuario { font-size: 14.5px; }
+.pt-usuario span { color: var(--txt-dim); }
+.pt-linea { font-size: 13px; color: var(--txt-dim); }
+.pt-quitar { padding: 5px 10px; font-size: 13px; }
+.pt-cargar { margin: -2px 0 12px; }
 
-.pozo-hecha { opacity: 0.6; }
-.pozo-hecha .material-symbols-rounded { color: var(--txt-verde); font-size: 19px; }
+.pozo-buscar { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-2); }
+.pozo-buscar input { flex: 1; min-width: 0; }
 
-.pozo-form { margin-top: var(--sp-5); padding-top: var(--sp-4); border-top: 1px solid var(--borde); }
+.pozo-mano summary { cursor: pointer; display: grid; gap: 2px; list-style-position: inside; }
+.pozo-mano summary strong { font: 700 16px/1.25 var(--font-display); }
+.pozo-mano summary span { color: var(--txt-dim); font-size: 13px; padding-left: 18px; }
+.pozo-mano[open] summary { margin-bottom: var(--sp-3); }
 .pozo-form .campo { margin-bottom: var(--sp-3); }
-.pozo-tipos { display: flex; gap: var(--sp-4); margin-bottom: var(--sp-3); font-size: 14px; }
+.pozo-tipos { display: flex; gap: var(--sp-4); flex-wrap: wrap; margin-bottom: var(--sp-3); font-size: 14px; }
 .pozo-tipos label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.pozo-plazos { gap: var(--sp-3); }
 .pozo-opt { color: var(--txt-mute); font-weight: 400; }
 
-/* ⚠️ En el teléfono el modal ocupa todo: se carga desde el celular, de pie y
-   apurado, y una caja centrada con márgenes deja los campos en media pantalla. */
-@media (max-width: 560px) {
-  #pozoModal { padding: 0; place-items: stretch; }
-  .pozo-caja { max-height: 100vh; border-radius: 0; border: 0; }
+/* Lo que dijo el jefe, debajo del estado de la asistencia (paso 3). */
+.asis-verif-ok {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 8px;
+  font-size: 13px; font-weight: 600; color: var(--txt-verde);
 }
+.asis-verif-ok .material-symbols-rounded { font-size: 17px; }
+.asis-verif { margin-top: 8px; }
+.asis-obs {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: rgba(245, 158, 11, 0.10);
+  border: 1px solid rgba(245, 158, 11, 0.38);
+  font-size: 13px; line-height: 1.45;
+}
+.asis-obs .material-symbols-rounded { font-size: 18px; color: var(--txt-ambar); flex: none; margin-top: 1px; }

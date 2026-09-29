@@ -8,9 +8,9 @@
 
 <!--
   🔴 EL TEMA SE APLICA ANTES DEL PRIMER PINTADO, y por eso este script va acá
-  arriba y no en app.js?v=7821e2f7.
+  arriba y no en app.js?v=d2c3d875.
 
-  `app.js?v=7821e2f7` se carga con `defer`: corre recién después de parsear el documento, así
+  `app.js?v=d2c3d875` se carga con `defer`: corre recién después de parsear el documento, así
   que poner el tema ahí deja un PARPADEO oscuro en cada carga — la página se dibuja
   con el default y un instante después cambia entera. Se ve barato y, proyectado en
   la reunión, se ve roto.
@@ -43,7 +43,7 @@
   adentro: 5.347.060 bytes medidos en ago 2026. Con la lista baja a entre 11 KB
   y 54 KB según el subconjunto que negocie el navegador — en producción se
   midieron 11.228 bytes. O sea que esto era el ~98 % del peso de la página: TODO
-  el resto junto (app.js?v=7821e2f7, styles.css?v=7f0f46be, las dos fuentes de texto y el confeti) son
+  el resto junto (app.js?v=d2c3d875, styles.css?v=f01c0f1c, las dos fuentes de texto y el confeti) son
   unos 210 KB.
 
   Y no se ve como "la página pesa": se ve como que los BOTONES TARDAN. Los
@@ -57,7 +57,7 @@
   instante, pero solo si alguien mira esa pantalla: hay un check que los recorre
   todos en `verify-frontend.mjs`.
 
-  Los ejes (opsz, wght, FILL, GRAD) se dejan COMPLETOS a propósito: `styles.css?v=7f0f46be`
+  Los ejes (opsz, wght, FILL, GRAD) se dejan COMPLETOS a propósito: `styles.css?v=f01c0f1c`
   usa FILL 0 y FILL 1, y recortarlos ganaría poco sobre 54 KB a cambio de romper
   el estilo de forma difícil de rastrear.
 
@@ -65,9 +65,9 @@
   navegador dibujaría la ligadura con la fuente de respaldo y se vería el nombre
   del icono escrito hasta que llegue la buena.
 -->
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=arrow_back,arrow_forward,campaign,cancel,celebration,add_circle,check_circle,dark_mode,edit_note,emoji_events,error,event_busy,fact_check,fullscreen,fullscreen_exit,grid_view,groups,hourglass_top,how_to_reg,info,light_mode,location_on,lock_clock,login,logout,manage_accounts,network_check,open_in_new,refresh,running_with_errors,save,savings,schedule,settings,shield_person,star,sync,verified,videocam,visibility,visibility_off,volume_up&display=block" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=arrow_back,arrow_forward,campaign,cancel,add_circle,check_circle,dark_mode,edit_note,emoji_events,error,event_busy,fact_check,fullscreen,fullscreen_exit,grid_view,groups,hourglass_top,how_to_reg,info,light_mode,location_on,lock_clock,login,logout,manage_accounts,network_check,open_in_new,refresh,running_with_errors,save,savings,schedule,search,settings,shield_person,star,sync,verified,videocam,visibility,visibility_off,volume_up&display=block" rel="stylesheet">
 
-<link rel="stylesheet" href="styles.css?v=7f0f46be">
+<link rel="stylesheet" href="styles.css?v=f01c0f1c">
 
 <!--
   El único CDN es opcional por diseño y el portal arranca igual sin él: si
@@ -80,7 +80,7 @@
   blanco sin ningún error en la consola.
 -->
 <script defer src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
-<script defer src="app.js?v=7821e2f7"></script>
+<script defer src="app.js?v=d2c3d875"></script>
 </head>
 <body>
 
@@ -238,7 +238,7 @@
 
         <!--
           🎬 EL ESCENARIO (sep 2026): la llamada, la tarjeta del destape, el historial
-          y los controles del anfitrión. Lo pinta `renderEscenario` en app.js?v=7821e2f7.
+          y los controles del anfitrión. Lo pinta `renderEscenario` en app.js?v=d2c3d875.
 
           Reemplaza al overlay oscuro del destape: con la tarjeta que ahora se QUEDA
           minutos, un overlay tapaba todo lo demás. Es CLARO en los dos temas
@@ -266,13 +266,94 @@
         -->
         <aside class="panel-lado">
           <!-- Festejo: lo que se aprieta. Va PRIMERO. -->
-          <div class="bloque" id="bloqueFestejo">
-            <h4><span class="material-symbols-rounded">celebration</span> Producción</h4>
+          <!--
+            🎉 MI PRODUCCIÓN (sep 2026, paso 3 del rediseño). El pozo dejó de ser un
+            cuadro emergente: vive en la página, en el orden que pidió el dueño — lo
+            más rápido primero. Las LISTAS las repinta app.js?v=d2c3d875; los FORMULARIOS son
+            fijos, para que un repintado no le borre a nadie lo que está escribiendo.
+
+            ⚠️ El teléfono es OBLIGATORIO en los tres caminos (decisión 09 del plan):
+            es lo que permite comprobar la etapa del lead y de quién es la venta.
+          -->
+          <div class="bloque bloque-pozo" id="bloqueFestejo">
+            <h4><span class="material-symbols-rounded">savings</span> Mi producción</h4>
             <div id="festejoCuerpo"></div>
+            <div class="pozo-grilla">
+              <div class="pozo-col">
+                <section class="pozo-sec">
+                  <h5>Mi producción en el pozo</h5>
+                  <p class="pozo-ayuda">Se canta cuando el anfitrión pida producción, y nadie más la ve hasta ese momento. Lo que no se cantó en la mañana queda para la tarde.</p>
+                  <div id="pozoCuerpo"></div>
+                </section>
+              </div>
+              <div class="pozo-col">
+                <section class="pozo-sec">
+                  <h5>Listas para cantar</h5>
+                  <p class="pozo-ayuda">Sus matrículas y abonos del CRM de las últimas 48 h. Se cargan con un toque.</p>
+                  <div id="pozoListas"></div>
+                </section>
+                <section class="pozo-sec">
+                  <h5>Buscar por teléfono</h5>
+                  <div class="pozo-buscar">
+                    <input type="tel" id="pozoBuscarTel" inputmode="numeric" placeholder="Teléfono del lead" autocomplete="off" aria-label="Teléfono del lead">
+                    <button class="btn" id="btnPozoBuscar"><span class="material-symbols-rounded">search</span> Buscar</button>
+                  </div>
+                  <div id="pozoBuscarRes"></div>
+                </section>
+                <details class="pozo-sec pozo-mano" id="pozoMano">
+                  <summary><strong>Cargar a mano</strong><span>¿Todavía no llenó el formulario de matrícula?</span></summary>
+                  <div class="pozo-form">
+                    <div class="pozo-tipos" role="radiogroup" aria-label="Tipo">
+                      <label><input type="radio" name="pozoTipo" value="matricula" checked> Matrícula</label>
+                      <label><input type="radio" name="pozoTipo" value="abono"> Abono</label>
+                    </div>
+                    <div class="campo">
+                      <label for="pozoTel">Teléfono del lead</label>
+                      <input type="tel" id="pozoTel" inputmode="numeric" placeholder="70011111" autocomplete="off">
+                    </div>
+                    <div class="pozo-tipos" role="radiogroup" aria-label="Plan">
+                      <label><input type="radio" name="pozoPlan" value="1" checked> Cupo Corporativo</label>
+                      <label><input type="radio" name="pozoPlan" value="2"> 2x1</label>
+                    </div>
+                    <div class="pozo-tipos pozo-plazos" role="radiogroup" aria-label="Plazo">
+                      <label><input type="radio" name="pozoPlazo" value="contado"> Contado</label>
+                      <label><input type="radio" name="pozoPlazo" value="6m" checked> 6 meses</label>
+                      <label><input type="radio" name="pozoPlazo" value="8m"> 8 meses</label>
+                      <label><input type="radio" name="pozoPlazo" value="10m"> 10 meses</label>
+                    </div>
+                    <div class="campo">
+                      <label for="pozoAlumno" id="pozoAlumnoEtq">Usuario <span class="pozo-opt">(el niño o la niña)</span></label>
+                      <input type="text" id="pozoAlumno" maxlength="120" placeholder="Nombre y apellido">
+                    </div>
+                    <div class="campo oculto" id="pozoAlumno2Campo">
+                      <label for="pozoAlumno2">Usuario 2</label>
+                      <input type="text" id="pozoAlumno2" maxlength="120" placeholder="Nombre y apellido">
+                    </div>
+                    <div class="campo">
+                      <label for="pozoTitular">Titular <span class="pozo-opt">(padre, madre o tutor)</span></label>
+                      <input type="text" id="pozoTitular" maxlength="120" placeholder="Quien firma y paga">
+                    </div>
+                    <div class="campo">
+                      <label for="pozoCiudad">Ciudad</label>
+                      <input type="text" id="pozoCiudad" maxlength="60" list="pozoCiudades" autocomplete="off">
+                      <datalist id="pozoCiudades">
+                        <option value="Santa Cruz"><option value="La Paz"><option value="Cochabamba">
+                        <option value="Sucre"><option value="Tarija"><option value="Oruro">
+                        <option value="Potosí"><option value="Trinidad"><option value="Cobija">
+                      </datalist>
+                    </div>
+                    <button class="btn btn-verde btn-bloque" id="btnPozoGuardar">
+                      <span class="material-symbols-rounded">add_circle</span> Cargar al pozo
+                    </button>
+                  </div>
+                </details>
+              </div>
+            </div>
           </div>
 
           <!-- Asistencia: lo que cada uno mira de sí mismo. -->
-          <div class="bloque">
+          <!-- Va PRIMERO (paso 3, diseño aprobado): acá el asesor ve lo que dijo su jefe. -->
+          <div class="bloque bloque-asis" id="bloqueAsistencia">
             <h4><span class="material-symbols-rounded">how_to_reg</span> Su asistencia</h4>
             <div id="asistenciaCuerpo"></div>
           </div>
@@ -334,7 +415,7 @@
          Sin pestaña en la barra: se llega solo poniendo #config en la dirección.
 
          🔴 No es un secreto, es que NO ES UNA PANTALLA DEL EQUIPO. La dirección del
-         backend ya viene puesta en app.js?v=7821e2f7, así que nadie del equipo necesita tocar
+         backend ya viene puesta en app.js?v=d2c3d875, así que nadie del equipo necesita tocar
          nada acá; y un director no tiene por qué ver las tripas de cómo está
          programado el CRM. Cuando la empresa tenga directores que no programan,
          esta pantalla sería ruido que invita a romper algo.
@@ -369,64 +450,6 @@
   </main>
 </div>
 
-
-<!-- ══════════════════════════════════════════════════════════════════════
-     EL POZO — cargar producción antes de la reunión (sep 2026, Paso 5)
-
-     🔴 Existe para matar la carrera contra el reloj: hasta acá había que apretar
-     "¡Tengo Matrícula!" dentro de los 30 segundos del conteo, y quien tenía
-     internet lento perdía su venta delante de toda la filial.
-
-     Tres caminos, y los tres terminan en la misma acción del servidor:
-       · con un toque, desde las matrículas que el CRM ya tiene de las últimas 48 h
-       · buscando por teléfono del lead
-       · a mano, para quien todavía no llenó el formulario de matrícula
-
-     ⚠️ El teléfono es OBLIGATORIO en los tres (decisión 09 del plan): es lo que
-     permite comprobar la etapa del lead (MATRICULA o ABONO según el tipo) y de quién es la venta; eso se
-     hace al CARGAR — nunca en vivo, o alguien quedaría afuera del festejo delante
-     de toda la filial por no haber movido la etapa.
-     ══════════════════════════════════════════════════════════════════════ -->
-<div id="pozoModal" class="oculto" role="dialog" aria-label="Cargar producción">
-  <div class="pozo-caja">
-    <div class="pozo-cab">
-      <h3><span class="material-symbols-rounded">savings</span> Cargar producción</h3>
-      <button class="btn btn-fantasma" id="btnPozoCerrar" aria-label="Cerrar">
-        <span class="material-symbols-rounded">cancel</span>
-      </button>
-    </div>
-
-    <p class="pozo-ayuda">
-      Cárguela cuando quiera. Se canta sola cuando el anfitrión pida producción,
-      y nadie más la ve hasta ese momento.
-    </p>
-
-    <div id="pozoCuerpo"></div>
-
-    <div class="pozo-form">
-      <h4>Cargar a mano</h4>
-      <div class="pozo-tipos">
-        <label><input type="radio" name="pozoTipo" value="matricula" checked> Matrícula</label>
-        <label><input type="radio" name="pozoTipo" value="abono"> Abono</label>
-      </div>
-      <div class="campo">
-        <label for="pozoTel">Teléfono del lead</label>
-        <input type="tel" id="pozoTel" inputmode="numeric" placeholder="70011111" autocomplete="off">
-      </div>
-      <div class="campo">
-        <label for="pozoAlumno">Nombre del usuario <span class="pozo-opt">(opcional)</span></label>
-        <input type="text" id="pozoAlumno" maxlength="120" placeholder="Se completa solo si ya está en el CRM">
-      </div>
-      <div class="campo">
-        <label for="pozoCiudad">Ciudad <span class="pozo-opt">(opcional)</span></label>
-        <input type="text" id="pozoCiudad" maxlength="60">
-      </div>
-      <button class="btn btn-primario btn-bloque" id="btnPozoGuardar">
-        <span class="material-symbols-rounded">add_circle</span> Cargar al pozo
-      </button>
-    </div>
-  </div>
-</div>
 
 <div id="toasts" aria-live="polite"></div>
 
