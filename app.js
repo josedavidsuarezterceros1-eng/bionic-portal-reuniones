@@ -3121,7 +3121,9 @@ var Equipo = (function () {
         // Cortos a propósito: en la fila, uno largo se cortaba a la mitad del ejemplo.
         campoTexto('data-motivo', p.email, modo === 'TARDE'
           ? 'Motivo (ej. «Entró a Meet a las 8:14»)'
-          : '¿Por qué faltó? (ej. «No estuvo en Meet»)', 120, '') +
+          : '¿Por qué faltó? (ej. «No estuvo en Meet»)', 120,
+          // Si ya estaba marcado así, el motivo que ya tenía: que no tenga que reescribirlo.
+          s === modo ? p.motivo : '') +
         campoTexto('data-obs', p.email, 'Observación (opcional)', 300, p.observacion) +
         '<button type="button" class="btn ' + (modo === 'AUSENTE' ? 'btn-peligro' : 'btn-primario') + '" data-guardar="' + e + '">Guardar</button>' +
         '<button type="button" class="btn" data-cancelar="1">Cancelar</button>' +
@@ -3162,6 +3164,12 @@ var Equipo = (function () {
   /** La lista entera, agrupada. */
   function pintarLista(ctx, r) {
     var c = CTX[ctx];
+    /*
+     * Otra reunión (el Director cambió la fecha, o en la sala pasó el corte de las
+     * 13:00): lo que estaba abierto era de la anterior. Sin esto, el editor de una
+     * fila quedaba abierto en una reunión donde nadie lo abrió.
+     */
+    if (c.d && (c.d.fecha !== r.fecha || c.d.turno !== r.turno)) { c.modo = {}; c.abierto = {}; }
     c.d = r;
     var cont = UI.id(c.cont);
     if (!cont) return;
@@ -3440,12 +3448,25 @@ var Equipo = (function () {
         '<span>Todo su equipo entró a la sala.</span></div>';
       return;
     }
+    /*
+     * ⚠️ El mensaje depende de la hora: antes del inicio, «ya empezó» es mentira y
+     * el que lo recibe a las 7:45 ya no le cree al siguiente. La hora de Bolivia
+     * sale del reloj alineado con el servidor, no del de la computadora.
+     */
+    var horaBo = parseInt(new Intl.DateTimeFormat('en-US',
+      { timeZone: 'America/La_Paz', hour: 'numeric', hour12: false }).format(new Date(Reloj.ahora())), 10);
+    var empezo = !r.inicioHora || horaBo >= r.inicioHora;
+    var mensaje = function (p) {
+      return empezo
+        ? 'Hola ' + p.nombre + ', la reunión ya empezó. ¿Tiene algún inconveniente para entrar?'
+        : 'Hola ' + p.nombre + ', la reunión empieza a las ' + r.inicioHora + ':00. ¿Ya se está conectando?';
+    };
     cont.innerHTML = '<section class="eq-entrar">' +
       '<h5><span class="eq-latido"></span> Todavía no entraron a la sala <span class="eq-dim">· ' + faltan.length + '</span></h5>' +
       '<div class="eq-entrar-grilla">' + faltan.map(function (p) {
         return '<div class="eq-entrar-it" data-email="' + UI.esc(p.email) + '">' + UI.avatar(p.foto, p.nombre, 'avatar-mini') +
           '<span class="eq-entrar-nom"><b>' + UI.esc(p.nombre) + '</b><span class="eq-dim">' + UI.esc(p.cargo) + '</span></span>' +
-          waBoton(waUrl(p.telefono, 'Hola ' + p.nombre + ', la reunión ya empezó. ¿Tiene algún inconveniente para entrar?'),
+          waBoton(waUrl(p.telefono, mensaje(p)),
             'WhatsApp', 'Escribirle por WhatsApp') +
         '</div>';
       }).join('') + '</div>' +
@@ -3549,6 +3570,13 @@ var Equipo = (function () {
       UI.mostrar(UI.id('bloqueEquipo'), false);
       UI.mostrar(UI.id('bloqueFestejo'), true);
     },
+    /*
+     * 🔴 Al volver a la pestaña del portal, la lista se trae de nuevo. El jefe pasa
+     * la reunión en la pestaña de Meet —el portal queda escondido y el refresco no
+     * corre—, y al volver veía quién faltaba hace un minuto. Solo si hay equipo: a
+     * quien no tiene, los refrescos ya se le apagaron.
+     */
+    alVolver: function () { if (SALA.timer) refrescar(); },
     elegirPestana: function (p) {
       SALA.pestana = p === 'produccion' ? 'produccion' : 'equipo';
       aplicarPestana();
@@ -3937,7 +3965,7 @@ var App = (function () {
     /* Ver `Sala.alVolverAlFrente`: el navegador frena las pestañas de fondo y el
        reloj se queda clavado hasta que alguien lo despierta. */
     document.addEventListener('visibilitychange', function () {
-      if (!document.hidden) Sala.alVolverAlFrente();
+      if (!document.hidden) { Sala.alVolverAlFrente(); Equipo.alVolver(); }
     });
     Pantalla.ajustarDisponibilidad();
 

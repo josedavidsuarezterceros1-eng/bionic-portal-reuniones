@@ -1815,3 +1815,13 @@ tbody tr:hover { background: var(--surface); }
   .eq-est { width: 100%; min-width: 0; padding: 8px 4px; letter-spacing: 0.02em; }
   .eq-sinentrar { display: none; }
 }
+
+/* El panel de pantalla completa es una columna de 330 px en una pantalla ANCHA: la
+   regla de arriba (por ancho de pantalla) no lo alcanza, y las pestañas se partían
+   igual que en el teléfono. Mismo arreglo, por contenedor. */
+.sala-layout:fullscreen .sala-pestanas { display: grid; grid-template-columns: 1fr 1fr; width: 100%; border-radius: var(--r-lg); }
+.sala-layout:fullscreen .sala-pest { justify-content: center; flex-wrap: wrap; padding: 9px 8px; border-radius: var(--r-md); text-align: center; }
+.sala-layout:fullscreen .eq-botones { width: 100%; margin-left: 0; flex-wrap: nowrap; }
+.sala-layout:fullscreen .eq-est-col { flex: 1 1 0; min-width: 0; }
+.sala-layout:fullscreen .eq-est { width: 100%; min-width: 0; padding: 8px 4px; letter-spacing: 0.02em; }
+.sala-layout:fullscreen .eq-sinentrar { display: none; }
