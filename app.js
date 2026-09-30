@@ -1238,6 +1238,8 @@ var Sala = (function () {
     tituloSegunRonda(false);
     Pozo.limpiar();
     Equipo.salirSala();
+    // La franja vuelve y los botones del encabezado se van: la próxima sala decide de nuevo.
+    modoCompacto(false);
     clearTimeout(S.timerPoll); clearInterval(S.timerTick); clearInterval(S.timerAsis); clearInterval(S.timerVerif);
     S.timerPoll = S.timerTick = S.timerAsis = null;
     S.enReunion = false;
@@ -1680,6 +1682,26 @@ var Sala = (function () {
    * el sondeo corre cada 2 s y un botón reemplazado justo entre el apretar y el
    * soltar se come el clic, sin que se vea nada raro.
    */
+  /**
+   * Franja arriba (todos) o dos botones chicos en el encabezado (quien conduce).
+   *
+   * ⚠️ Los botones del encabezado son FIJOS en el HTML y acá solo se les cambia el
+   * texto y el `onclick`: reemplazarlos en cada sondeo (cada 2 s) se come el clic
+   * que cae justo en el medio, igual que con el botón de la franja.
+   *
+   * ⚠️ La franja se esconde solo FUERA de pantalla completa (la regla vive en el
+   * CSS): adentro es el lienzo de la proyección, y ahí están el ojo y la salida.
+   */
+  function modoCompacto(si) {
+    var layout = document.querySelector('#vista-sala .sala-layout');
+    if (layout) layout.classList.toggle('sala-conduce', !!si);
+    UI.mostrar(UI.id('salaCabAcciones'), !!si);
+    if (!si) return;
+    UI.id('btnEntrarCabTxt').textContent = S.enReunion ? 'Volver a la reunión' : 'Entrar a la reunión';
+    UI.id('btnEntrarCab').onclick = entrarAReunion;
+    UI.id('btnPantallaCab').onclick = function () { Pantalla.alternar(); };
+  }
+
   function renderEspera() {
     var r = S.estado;
     // Ya no hay video que pueda taparlo: este panel está siempre.
@@ -1689,6 +1711,17 @@ var Sala = (function () {
     var cajaAccion = UI.id('esperaAccion');
     var url = (r.sala && r.sala.meetUrl) || '';
     var firma = [r.sala.abierta, !!url, S.enReunion, r.soyAnfitrion].join('|');
+
+    /*
+     * 🎬 Quien CONDUCE, con la sala abierta y con enlace, no ve la franja (arte
+     * aprobado, sep 2026): sus dos acciones pasan al encabezado, chicas, y el
+     * escenario queda arriba. En cualquier otro caso —esperando, «Falta el enlace»,
+     * el rescate «Abrir la sala»— la franja se queda: ahí trae una acción o un
+     * aviso que el anfitrión necesita. Y el asesor la conserva siempre: su botón
+     * grande es lo que le arranca la asistencia.
+     */
+    var compacto = !!(r.sala.abierta && url && r.soyAnfitrion);
+    modoCompacto(compacto);
 
     /* ── la sala está abierta: se puede entrar ──────────────────────────── */
     if (r.sala.abierta && url) {
@@ -2664,10 +2697,12 @@ var Pantalla = (function () {
    * persona lo aprieta en medio de la reunión y cree que el portal se colgó.
    */
   function ajustarDisponibilidad() {
-    var b = UI.id('btnPantalla');
-    if (!b) return;
     var puede = (typeof document.fullscreenEnabled === 'undefined') || document.fullscreenEnabled;
-    b.style.display = puede ? '' : 'none';
+    // Los dos botones: el de la franja y el del encabezado (quien conduce).
+    ['btnPantalla', 'btnPantallaCab'].forEach(function (id) {
+      var b = UI.id(id);
+      if (b) b.style.display = puede ? '' : 'none';
+    });
   }
 
   function alternar() {

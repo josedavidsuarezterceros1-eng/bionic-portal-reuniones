@@ -1825,3 +1825,17 @@ tbody tr:hover { background: var(--surface); }
 .sala-layout:fullscreen .eq-est-col { flex: 1 1 0; min-width: 0; }
 .sala-layout:fullscreen .eq-est { width: 100%; min-width: 0; padding: 8px 4px; letter-spacing: 0.02em; }
 .sala-layout:fullscreen .eq-sinentrar { display: none; }
+
+/* ══ Quien CONDUCE, con la sala abierta (sep 2026, arte aprobado) ══════════════
+   Fuera de pantalla completa la franja «Está en la reunión» se esconde y sus dos
+   acciones van en el encabezado, chicas: el escenario queda arriba. Adentro de la
+   pantalla completa la franja es el lienzo de la proyección y se queda. */
+.sala-layout.sala-conduce:not(:fullscreen) > div:first-child { display: none; }
+.sala-cab-acciones { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.btn-cab-icono { padding: 8px 10px; }
+.btn-cab-icono .material-symbols-rounded { font-size: 21px; }
+.btn-cab-reunion {
+  background: var(--azul-soft); color: var(--txt-azul);
+  border-color: rgba(37, 99, 235, 0.30);
+}
+.btn-cab-reunion:hover { background: rgba(37, 99, 235, 0.16); }
