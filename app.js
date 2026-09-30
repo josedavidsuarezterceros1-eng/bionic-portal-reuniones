@@ -1213,6 +1213,8 @@ var Sala = (function () {
      * cuando el anfitrión destapa, que ya trae su propio repintado.
      */
     Pozo.entrar();
+    // Quien tiene gente a cargo ve además la pestaña «Mi equipo» (paso 4). Un asesor no.
+    Equipo.entrarSala();
     poll();
     /*
      * ⚠️ 250 ms y no 1 s. El tick solo trabaja durante la llamada (el resto del
@@ -1235,6 +1237,7 @@ var Sala = (function () {
     // se queda con la pestaña gritando "¡PRODUCCIÓN!" para siempre.
     tituloSegunRonda(false);
     Pozo.limpiar();
+    Equipo.salirSala();
     clearTimeout(S.timerPoll); clearInterval(S.timerTick); clearInterval(S.timerAsis); clearInterval(S.timerVerif);
     S.timerPoll = S.timerTick = S.timerAsis = null;
     S.enReunion = false;
@@ -2197,6 +2200,13 @@ var Sala = (function () {
         '<span><strong>Su jefe lo marcó ausente</strong>' +
         (v.motivo ? '<br>Motivo: ' + UI.esc(v.motivo) : '') + '</span></div>' + obs;
     }
+    // 🔴 La llegada tarde que marcó el jefe (paso 4) también PERJUDICA: va en rojo y con
+    // su motivo, para que pueda reclamar a tiempo. `situacion` la trae el backend nuevo.
+    if (v.situacion === 'TARDE') {
+      return '<div class="aviso aviso-error asis-verif"><span class="material-symbols-rounded">schedule</span>' +
+        '<span><strong>Su jefe marcó su ingreso como tardío</strong>' +
+        (v.motivo ? '<br>Motivo: ' + UI.esc(v.motivo) : '') + '</span></div>' + obs;
+    }
     return '<p class="asis-verif-ok"><span class="material-symbols-rounded">check_circle</span> Confirmada por su jefe</p>' + obs;
   }
 
@@ -2235,7 +2245,19 @@ var Sala = (function () {
      */
     if (S.asisValidada) {
       var hIng = S.asisIngreso ? UI.hora(S.asisIngreso) : null;
-      cont.innerHTML = S.asisTarde
+      /*
+       * 🔴 Si el jefe lo confirmó PUNTUAL, eso gana sobre el cálculo (paso 4,
+       * decisión 19): entró a Meet a tiempo y abrió el portal después. Sin esto, la
+       * tarjeta le diría «Ingreso tardío» y «Confirmada por su jefe» a la vez.
+       */
+      var v = S.verif;
+      var tarde = S.asisTarde && !(v && v.revisado && v.situacion === 'PRESENTE');
+      /*
+       * ⚠️ El paréntesis del ternario NO es estético. Sin él, `+ verifHtml()` se
+       * pegaba solo a la rama de «Asistencia registrada»: quien llegaba tarde no veía
+       * nunca lo que dijo su jefe —ni la observación—, justo quien más la necesita.
+       */
+      cont.innerHTML = (tarde
         ? '<div class="aviso aviso-error">' +
             '<span class="material-symbols-rounded">running_with_errors</span>' +
             '<span><strong>Ingreso tardío</strong>' +
@@ -2245,7 +2267,7 @@ var Sala = (function () {
             '<span class="material-symbols-rounded">verified</span>' +
             '<span><strong>Asistencia registrada</strong>' +
             (hIng ? '<br>Hora de ingreso: ' + UI.esc(hIng) + '.' : '') +
-            '</span></div>' + verifHtml();
+            '</span></div>') + verifHtml();
       return;
     }
     /*
@@ -2919,59 +2941,640 @@ var Dashboard = (function () {
 
 
 /* ══════════════════════════════════════════════════════════════════════════
+   Mi equipo — la asistencia de la gente de quien mira (sep 2026, paso 4)
+   ══════════════════════════════════════════════════════════════════════════ */
+var Equipo = (function () {
+  /*
+   * La lista vive en DOS lugares y la pinta este mismo código:
+   *   · 'sala'  la pestaña «Mi equipo» adentro de la reunión: la de AHORA, en vivo,
+   *             con «Todavía no entraron» y la producción del equipo sin cargar.
+   *   · 'asis'  la pestaña Asistencia: otra fecha u otro turno (el Director).
+   * Con dos listas escritas por separado, la misma persona se vería distinta en
+   * cada una y el jefe no sabría a cuál creerle.
+   *
+   * 🔴 Todo lo que DECIDE algo lo decide el SERVIDOR: a quién se puede tildar, si el
+   * turno sigue abierto, qué midió el portal (`medido`), qué vale hoy (`situacion`) y
+   * si alguien entró después de que lo marcaran ausente. Acá solo se ordena y se
+   * pinta. Si el navegador dedujera, por ejemplo, la llegada tarde con su reloj, la
+   * pantalla diría una cosa y la planilla otra.
+   *
+   * 🔴 Lo que se escribe va EN LA FILA, nunca con `prompt()`: la reunión se proyecta,
+   * una ventana del navegador queda encima de todo y algunos la bloquean.
+   */
+  var FRASES = ['Mejore la iluminación', 'Ambiente ruidoso', 'Cámara apagada', 'Buena presencia', 'Buena actitud'];
+  /** Con más gente que esto, los equipos de abajo arrancan plegados (decisión 21). */
+  var PLEGAR_DESDE = 12;
+  /** La lista de la sala se refresca sola: quien no entró puede entrar en cualquier momento. */
+  var REFRESCO_MS = 60 * 1000;
+  var PROD_MS = 3 * 60 * 1000;
+
+  function nuevo(cont) { return { cont: cont, d: null, abierto: {}, modo: {}, plegado: {}, enviando: false }; }
+  var CTX = { sala: nuevo('equipoLista'), asis: nuevo('verifTabla') };
+  var SALA = { pestana: 'equipo', timer: null, timerProd: null, pidiendo: false, prod: null, prodError: '' };
+
+  /*
+   * ⚠️ `situacion` y `medido` llegan desde el paso 4. Con un backend anterior (se
+   * publican por separado) se deducen del `estado` viejo, que solo dice PRESENTE o
+   * AUSENTE: la lista se ve como antes, sin la llegada tarde, en vez de romperse.
+   */
+  function situ(p) { return p.situacion || (p.estado === 'PRESENTE' ? 'PRESENTE' : 'AUSENTE'); }
+  function medido(p) { return p.medido || (p.automatico === 'VALIDADO' ? 'PRESENTE' : 'AUSENTE'); }
+  /** Lo que el jefe todavía tiene que mirar. «Entró después» vuelve a ser pendiente. */
+  function pendiente(p) { return !p.revisado || !!p.entroDespues; }
+  /** Lo que confirma «Confirmar los N presentes»: presente A TIEMPO según el portal y sin revisar. */
+  function confirmable(p) { return !p.revisado && medido(p) === 'PRESENTE' && situ(p) === 'PRESENTE'; }
+
+  /* Orden por lo que hay que decidir (decisión del dueño): ausentes → tarde → presentes. */
+  // ENTRANDO: está en la sala y todavía no completó su minuto. Se mira, pero no apura.
+  var PESO = { SIN_ENTRAR: 1, AUSENTE: 1, TARDE: 2, ENTRANDO: 2.5, PRESENTE: 3 };
+  function peso(p) { return p.entroDespues ? 0 : (PESO[situ(p)] || 1); }
+  function orden(a, b) {
+    if (peso(a) !== peso(b)) return peso(a) - peso(b);
+    if (pendiente(a) !== pendiente(b)) return pendiente(a) ? -1 : 1;
+    return a.nombre < b.nombre ? -1 : (a.nombre > b.nombre ? 1 : 0);
+  }
+
+  /**
+   * Agrupa por RAMA (la persona a cargo directo por la que cuelga cada uno).
+   * Los directos sin gente propia van juntos arriba; cada directo CON gente es un
+   * «Equipo de …» con su fila arriba y los suyos debajo.
+   */
+  function grupos(personas) {
+    var porRama = {}, ramas = [];
+    personas.forEach(function (p) {
+      var r = p.rama || p.email;
+      if (!porRama[r]) { porRama[r] = []; ramas.push(r); }
+      porRama[r].push(p);
+    });
+    var directos = [], equipos = [];
+    ramas.forEach(function (r) {
+      var gente = porRama[r];
+      var cabeza = gente.filter(function (p) { return p.email === r; })[0] || null;
+      var resto = gente.filter(function (p) { return p.email !== r; }).sort(orden);
+      if (!resto.length) { if (cabeza) directos.push(cabeza); return; }
+      equipos.push({ rama: r, cabeza: cabeza, gente: resto,
+        nombre: cabeza ? cabeza.nombre : (resto[0].ramaNombre || ''),
+        cargo: cabeza ? cabeza.cargo : (resto[0].ramaCargo || '') });
+    });
+    return { directos: directos.sort(orden), equipos: equipos };
+  }
+
+  /** Enlace de WhatsApp. Sin un número boliviano válido, no hay botón: un enlace roto no avisa nada. */
+  function waUrl(tel, texto) {
+    var t = String(tel || '').replace(/\D/g, '');
+    if (t.length === 8) t = '591' + t;
+    if (!/^591\d{8}$/.test(t)) return '';
+    return 'https://wa.me/' + t + '?text=' + encodeURIComponent(texto);
+  }
+  function waBoton(url, etiqueta, titulo) {
+    if (!url) return '<span class="eq-sintel">Sin teléfono en la hoja</span>';
+    return '<a class="btn btn-wa" href="' + UI.esc(url) + '" target="_blank" rel="noopener" title="' + UI.esc(titulo) + '">' +
+      '<span class="material-symbols-rounded">chat</span> ' + UI.esc(etiqueta) + '</a>';
+  }
+
+  /* ── una fila ──────────────────────────────────────────────────────────── */
+
+  function btnEstado(p, e, s, m) {
+    var attr = e === 'PRESENTE' ? 'data-presente' : (e === 'TARDE' ? 'data-tarde' : 'data-ausente');
+    var etq = e === 'PRESENTE' ? 'Presente' : (e === 'TARDE' ? 'Tarde' : 'Ausente');
+    return '<span class="eq-est-col">' +
+      '<button type="button" class="eq-est eq-est-' + e.toLowerCase() + (s === e ? ' activo' : '') + '" ' +
+        attr + '="' + UI.esc(p.email) + '" aria-pressed="' + (s === e) + '">' + etq + '</button>' +
+      // Lo que midió el portal, para que confirmar sea tocar el que ya está marcado.
+      (m === e ? '<span class="eq-segun">Según el portal</span>' : '') +
+    '</span>';
+  }
+
+  function linea(d, p, s) {
+    var partes = [];
+    if (s === 'ENTRANDO') partes.push('En la sala desde las <span class="eq-hora">' + UI.hora(p.ingreso) + '</span> · se está registrando');
+    else if (p.ingreso) partes.push('<span class="eq-hora">Ingreso ' + UI.hora(p.ingreso) + '</span>');
+    else if (s === 'SIN_ENTRAR') partes.push('Todavía no entró a la sala');
+    else partes.push('<span class="' + (s === 'AUSENTE' ? 'eq-rojo' : '') + '">El portal no lo registró</span>');
+    if (p.salas && p.salas.length) partes.push('En ' + UI.esc(p.salas.join(' · ')));
+    // Quién la revisó: gana la última corrección, y sin esto dos jefes se pisan sin enterarse.
+    if (p.revisado) partes.push('<span class="eq-rev">Revisado por ' + UI.esc(p.por) + (p.cuando ? ' · ' + UI.hora(p.cuando) : '') + '</span>');
+    // 🔴 Y si nadie la revisó, se DICE: «sin revisar» no es lo mismo que «faltó».
+    else partes.push('<span class="eq-sinrev">sin revisar</span>');
+    return partes.join(' · ');
+  }
+
+  function campoTexto(attr, email, ph, max, valor) {
+    return '<input type="text" class="verif-texto" ' + attr + '="' + UI.esc(email) + '" placeholder="' + UI.esc(ph) + '" ' +
+      'maxlength="' + max + '" value="' + UI.esc(valor || '') + '">';
+  }
+
+  function fila(ctx, p) {
+    var c = CTX[ctx], d = c.d, s = situ(p), m = medido(p);
+    var edita = !!d.puedeEditar, modo = c.modo[p.email] || '';
+    var e = UI.esc(p.email);
+
+    /*
+     * Presente y a tiempo, sin nada que decidir: UN renglón. Tocarlo lo abre.
+     * ⚠️ Con una observación escrita queda ABIERTA: en un renglón no se vería, y el
+     * jefe no sabría qué le dejaron anotado a esa persona.
+     */
+    if (s === 'PRESENTE' && !p.entroDespues && !p.observacion && !c.abierto[p.email] && !modo) {
+      return '<div class="eq-fila eq-compacta" data-email="' + e + '">' +
+        '<button type="button" class="eq-compacta-btn" data-expandir="' + e + '" title="Tocar para cambiar o anotar">' +
+          UI.avatar(p.foto, p.nombre, 'avatar-mini') +
+          '<span class="eq-nom">' + UI.esc(p.nombre) + '</span>' +
+          '<span class="eq-dim">· ' + UI.esc(p.cargo) + '</span>' +
+          (p.ingreso ? '<span class="eq-dim">· Ingreso ' + UI.hora(p.ingreso) + '</span>' : '') +
+          '<span class="eq-der">' +
+            (p.revisado
+              ? '<span class="eq-rev">Revisado por ' + UI.esc(p.por) + (p.cuando ? ' · ' + UI.hora(p.cuando) : '') + '</span>'
+              : '<span class="eq-sinrev">sin revisar</span>') +
+            '<span class="material-symbols-rounded eq-tilde">check_circle</span>' +
+          '</span>' +
+        '</button>' +
+      '</div>';
+    }
+
+    var pideMotivo = modo === 'TARDE' || modo === 'AUSENTE';
+    var html = '<div class="eq-fila eq-s-' + s.toLowerCase() + (p.entroDespues ? ' eq-alerta' : '') + '" data-email="' + e + '">' +
+      '<div class="eq-cab">' +
+        '<span class="eq-foto eq-punto-' + (p.entroDespues ? 'ausente' : s.toLowerCase()) + '">' + UI.avatar(p.foto, p.nombre) + '</span>' +
+        '<div class="eq-id">' +
+          '<div><span class="eq-nom">' + UI.esc(p.nombre) + '</span> <span class="eq-dim">· ' + UI.esc(p.cargo) + '</span>' +
+            (c.abierto[p.email] ? ' <button type="button" class="eq-link" data-expandir="' + e + '">cerrar</button>' : '') + '</div>' +
+          '<div class="eq-linea">' + linea(d, p, s) + '</div>' +
+        '</div>' +
+        (edita
+          ? '<div class="eq-botones">' + btnEstado(p, 'PRESENTE', s, m) + btnEstado(p, 'TARDE', s, m) + btnEstado(p, 'AUSENTE', s, m) +
+              (s === 'SIN_ENTRAR' ? '<span class="eq-sinentrar">Sin entrar</span>' : '') + '</div>'
+          : '<div class="eq-botones"><span class="chip ' + (s === 'PRESENTE' ? 'chip-verde' : s === 'TARDE' ? 'chip-ambar' : s === 'AUSENTE' ? 'chip-rojo' : '') + '">' +
+              ({ PRESENTE: 'Presente', TARDE: 'Tarde', AUSENTE: 'Ausente', SIN_ENTRAR: 'Sin entrar', ENTRANDO: 'Entrando' }[s] || s) + '</span></div>') +
+      '</div>';
+
+    // 🔴 La franja roja de «entró después» (decisión 23). No se corrige sola: el jefe decide.
+    if (p.entroDespues) {
+      html += '<div class="eq-banda"><span class="material-symbols-rounded">error</span><span>' +
+        'Entró a las ' + UI.hora(p.ingreso) + ', después de que lo marcaran ausente. Revise la corrección.</span></div>';
+    }
+    if (p.motivo && !pideMotivo) {
+      html += '<div class="eq-motivo"><strong>Motivo:</strong> ' + UI.esc(p.motivo) + '</div>';
+    }
+
+    if (pideMotivo && edita) {
+      html += '<div class="eq-editor verif-motivo">' +
+        // Cortos a propósito: en la fila, uno largo se cortaba a la mitad del ejemplo.
+        campoTexto('data-motivo', p.email, modo === 'TARDE'
+          ? 'Motivo (ej. «Entró a Meet a las 8:14»)'
+          : '¿Por qué faltó? (ej. «No estuvo en Meet»)', 120, '') +
+        campoTexto('data-obs', p.email, 'Observación (opcional)', 300, p.observacion) +
+        '<button type="button" class="btn ' + (modo === 'AUSENTE' ? 'btn-peligro' : 'btn-primario') + '" data-guardar="' + e + '">Guardar</button>' +
+        '<button type="button" class="btn" data-cancelar="1">Cancelar</button>' +
+        '<span class="eq-lave">La observación la ve la persona.</span>' +
+      '</div>';
+    } else if (modo === 'OBS' && edita) {
+      var faltaMotivo = (s === 'TARDE' || s === 'AUSENTE') && !p.motivo;
+      html += '<div class="eq-editor verif-motivo">' +
+        '<div class="eq-frases">' + FRASES.map(function (f) {
+          return '<button type="button" class="eq-frase" data-frase="' + UI.esc(f) + '" data-email="' + e + '">«' + UI.esc(f) + '»</button>';
+        }).join('') + '</div>' +
+        (faltaMotivo ? campoTexto('data-motivo', p.email, 'Motivo (obligatorio)', 120, '') : '') +
+        campoTexto('data-obs', p.email, 'Observación', 300, p.observacion) +
+        '<button type="button" class="btn btn-primario" data-guardar-ok="' + e + '">Guardar</button>' +
+        '<button type="button" class="btn" data-cancelar="1">Cancelar</button>' +
+        '<span class="eq-lave">La ve la persona.</span>' +
+      '</div>';
+    } else if (p.observacion) {
+      html += '<div class="eq-obs"><span class="material-symbols-rounded">edit_note</span><span>' +
+        '<strong>Observación:</strong> «' + UI.esc(p.observacion) + '» <span class="eq-lave">· La ve la persona</span></span>' +
+        (edita && s !== 'SIN_ENTRAR' ? '<button type="button" class="eq-link" data-observar="' + e + '">editar</button>' : '') +
+      '</div>';
+    } else if (edita && s !== 'SIN_ENTRAR') {
+      html += '<button type="button" class="eq-link eq-mas" data-observar="' + e + '">+ Observación</button>';
+    }
+    return html + '</div>';
+  }
+
+  function botonConfirmar(ctx, clave, gente) {
+    if (!CTX[ctx].d.puedeEditar) return '';
+    var n = gente.filter(confirmable).length;
+    if (!n) return '';
+    return '<div class="eq-confirmar"><button type="button" class="btn btn-verde" data-confirmar="' + UI.esc(clave) + '">' +
+      '<span class="material-symbols-rounded">check_circle</span> ' +
+      (n === 1 ? 'Confirmar el presente' : 'Confirmar los ' + n + ' presentes') + '</button></div>';
+  }
+
+  /** La lista entera, agrupada. */
+  function pintarLista(ctx, r) {
+    var c = CTX[ctx];
+    c.d = r;
+    var cont = UI.id(c.cont);
+    if (!cont) return;
+    var g = grupos(r.personas || []);
+    var plegarPorDefecto = (r.personas || []).length > PLEGAR_DESDE;
+    var html = '';
+    if (g.directos.length) {
+      html += '<section class="eq-grupo">' +
+        (g.equipos.length ? '<h5 class="eq-gtit">Su gente directa</h5>' : '') +
+        g.directos.map(function (p) { return fila(ctx, p); }).join('') +
+        botonConfirmar(ctx, '__directos', g.directos) +
+      '</section>';
+    }
+    g.equipos.forEach(function (eq) {
+      var plegado = c.plegado[eq.rama] !== undefined ? c.plegado[eq.rama] : plegarPorDefecto;
+      var todos = (eq.cabeza ? [eq.cabeza] : []).concat(eq.gente);
+      var pend = eq.gente.filter(pendiente).length;
+      html += '<section class="eq-grupo" data-rama="' + UI.esc(eq.rama) + '">' +
+        '<div class="eq-gcab"><h5 class="eq-gtit">Equipo de ' + UI.esc(eq.nombre) +
+          (eq.cargo ? ' <span class="eq-dim">· ' + UI.esc(eq.cargo) + '</span>' : '') + '</h5>' +
+          '<button type="button" class="eq-link" data-plegar="' + UI.esc(eq.rama) + '">' +
+            (plegado ? 'Ver su equipo (' + eq.gente.length + (pend ? ' · ' + pend + ' sin revisar' : '') + ')' : 'Plegar') +
+            (plegado ? ' <span class="material-symbols-rounded">expand_more</span>' : ' <span class="material-symbols-rounded">expand_less</span>') + '</button>' +
+        '</div>' +
+        (eq.cabeza ? fila(ctx, eq.cabeza) : '') +
+        (plegado ? '' : '<div class="eq-gente">' + eq.gente.map(function (p) { return fila(ctx, p); }).join('') + '</div>') +
+        botonConfirmar(ctx, eq.rama, plegado ? (eq.cabeza ? [eq.cabeza] : []) : todos) +
+      '</section>';
+    });
+    cont.innerHTML = html;
+
+    // Si una fila tenía un campo abierto, el cursor vuelve ahí.
+    var abierta = Object.keys(c.modo)[0];
+    if (abierta) {
+      var campo = cont.querySelector('[data-motivo="' + abierta + '"]') || cont.querySelector('[data-obs="' + abierta + '"]');
+      if (campo) campo.focus();
+    }
+  }
+
+  /** Cuántos quedan por revisar en lo que se ve. */
+  function pendientes(ctx) {
+    var d = CTX[ctx].d;
+    return d && d.personas ? d.personas.filter(pendiente).length : 0;
+  }
+
+  /* ── escribir ──────────────────────────────────────────────────────────── */
+
+  function botones(ctx, apagados) {
+    var t = UI.id(CTX[ctx].cont);
+    if (!t) return;
+    Array.prototype.forEach.call(t.querySelectorAll('button'), function (b) { b.disabled = apagados; });
+  }
+
+  /** Lo que llega después de escribir se pinta en el lugar de donde salió el pedido. */
+  function alResponder(ctx, r) {
+    if (ctx === 'asis') Asistencia.pintarVerif(r); else pintarSala(r);
+  }
+
+  /*
+   * 🔴 Escribe: NO se reintenta sola (ver POST_REPETIBLE) — un reintento agregaría
+   * otra fila con la misma corrección. Y el doble clic haría exactamente eso: los
+   * botones se apagan hasta que el servidor conteste.
+   */
+  function marcar(ctx, email, estado, motivo, observacion) {
+    var c = CTX[ctx];
+    if (c.enviando) return;
+    c.enviando = true;
+    botones(ctx, true);
+    API.post({
+      accion: 'verificarAsistencia', token: Sesion.token,
+      email: email, estado: estado,
+      // `presente` para un backend anterior al paso 4, que no lee `estado`.
+      presente: estado !== 'AUSENTE',
+      motivo: motivo || '', observacion: observacion || '',
+      fecha: c.d.fecha, turno: c.d.turno
+    }).then(function (r) {
+      if (!r || !r.ok) { UI.toast((r && r.message) || 'No se pudo guardar.', 'error'); return; }
+      delete c.modo[email];
+      delete c.abierto[email];
+      alResponder(ctx, r);
+      UI.toast({ PRESENTE: 'Marcado presente.', TARDE: 'Marcado tarde.', AUSENTE: 'Marcado ausente.' }[estado], 'ok');
+    }).catch(function (e) {
+      UI.toast((e && e.message) || 'Error de conexión.', 'error');
+    }).then(function () {
+      c.enviando = false;
+      botones(ctx, false);
+    });
+  }
+
+  /*
+   * «Confirmar los N presentes». Se mandan los que se VEN confirmables; el servidor
+   * vuelve a aplicar la regla y saltea a quien haya cambiado en el medio.
+   */
+  function confirmar(ctx, clave) {
+    var c = CTX[ctx];
+    if (c.enviando || !c.d) return;
+    var g = grupos(c.d.personas || []);
+    var gente = clave === '__directos' ? g.directos : (function () {
+      var eq = g.equipos.filter(function (x) { return x.rama === clave; })[0];
+      if (!eq) return [];
+      var plegado = c.plegado[eq.rama] !== undefined ? c.plegado[eq.rama] : (c.d.personas || []).length > PLEGAR_DESDE;
+      // Plegado, el botón cuenta solo lo que se ve: no se confirma a quien no se miró.
+      return (eq.cabeza ? [eq.cabeza] : []).concat(plegado ? [] : eq.gente);
+    })();
+    var emails = gente.filter(confirmable).map(function (p) { return p.email; });
+    if (!emails.length) return;
+    c.enviando = true;
+    botones(ctx, true);
+    API.post({ accion: 'confirmarPresentes', token: Sesion.token, emails: emails,
+               fecha: c.d.fecha, turno: c.d.turno })
+      .then(function (r) {
+        if (!r || !r.ok) { UI.toast((r && r.message) || 'No se pudo confirmar.', 'error'); return; }
+        alResponder(ctx, r);
+        UI.toast(r.confirmados === 1 ? 'Confirmado.' : 'Confirmados: ' + (r.confirmados || 0) + '.', 'ok');
+      })
+      .catch(function (e) { UI.toast((e && e.message) || 'Error de conexión.', 'error'); })
+      .then(function () { c.enviando = false; botones(ctx, false); });
+  }
+
+  function valor(ctx, attr, email) {
+    var campo = UI.id(CTX[ctx].cont).querySelector('[' + attr + '="' + email + '"]');
+    return campo ? campo.value.trim() : '';
+  }
+
+  function persona(ctx, email) {
+    var d = CTX[ctx].d;
+    return d ? (d.personas || []).filter(function (p) { return p.email === email; })[0] : null;
+  }
+
+  function alClic(ctx, ev) {
+    var b = ev.target.closest && ev.target.closest('button');
+    if (!b) return;
+    var c = CTX[ctx];
+    var repintar = function () { pintarLista(ctx, c.d); };
+    var email;
+
+    if ((email = b.getAttribute('data-expandir'))) {
+      if (c.abierto[email]) delete c.abierto[email]; else c.abierto[email] = true;
+      delete c.modo[email];
+      repintar(); return;
+    }
+    if ((email = b.getAttribute('data-plegar'))) {
+      var actual = c.plegado[email] !== undefined ? c.plegado[email] : (c.d.personas || []).length > PLEGAR_DESDE;
+      c.plegado[email] = !actual;
+      repintar();
+      return;
+    }
+    if ((email = b.getAttribute('data-confirmar'))) { confirmar(ctx, email); return; }
+    if (b.getAttribute('data-cancelar')) { c.modo = {}; repintar(); return; }
+
+    // Presente: un toque. Conserva la observación que ya tenía: tocar «Presente» no
+    // puede borrar en silencio lo que otro jefe anotó.
+    if ((email = b.getAttribute('data-presente'))) {
+      var p = persona(ctx, email);
+      if (p && p.revisado && situ(p) === 'PRESENTE' && !p.entroDespues) {
+        UI.toast('Ya está confirmado.', 'info'); return;
+      }
+      marcar(ctx, email, 'PRESENTE', '', p ? p.observacion : '');
+      return;
+    }
+    // Tarde y ausente PERJUDICAN: piden el motivo en la fila antes de guardar.
+    if ((email = b.getAttribute('data-tarde'))) { c.modo = {}; c.modo[email] = 'TARDE'; repintar(); return; }
+    if ((email = b.getAttribute('data-ausente'))) { c.modo = {}; c.modo[email] = 'AUSENTE'; repintar(); return; }
+    if ((email = b.getAttribute('data-observar'))) { c.modo = {}; c.modo[email] = 'OBS'; repintar(); return; }
+
+    if ((email = b.getAttribute('data-frase') && b.getAttribute('data-email'))) {
+      var campo = UI.id(c.cont).querySelector('[data-obs="' + email + '"]');
+      if (campo) {
+        var f = b.getAttribute('data-frase');
+        campo.value = campo.value.trim() ? campo.value.trim().replace(/[.\s]*$/, '') + '. ' + f : f;
+        campo.focus();
+      }
+      return;
+    }
+
+    if ((email = b.getAttribute('data-guardar'))) {
+      var modo = c.modo[email];
+      var texto = valor(ctx, 'data-motivo', email);
+      // El servidor lo exige igual; acá se avisa sin gastar un viaje.
+      if (texto.length < 4) {
+        UI.toast(modo === 'TARDE' ? 'Escriba el motivo para marcar la llegada tarde.' : 'Escriba el motivo para marcar ausente.', 'error');
+        return;
+      }
+      marcar(ctx, email, modo, texto, valor(ctx, 'data-obs', email));
+      return;
+    }
+    if ((email = b.getAttribute('data-guardar-ok'))) {
+      var q = persona(ctx, email);
+      if (!q) return;
+      var s = situ(q);
+      var est = s === 'TARDE' || s === 'AUSENTE' ? s : 'PRESENTE';
+      var motivo = q.motivo || valor(ctx, 'data-motivo', email);
+      if (est !== 'PRESENTE' && motivo.length < 4) { UI.toast('Escriba el motivo.', 'error'); return; }
+      marcar(ctx, email, est, est === 'PRESENTE' ? '' : motivo, valor(ctx, 'data-obs', email));
+    }
+  }
+
+  /* ── la pestaña «Mi equipo» de la sala ─────────────────────────────────── */
+
+  var TXT_TURNO = { 'MAÑANA': 'Turno mañana', 'TARDE': 'Turno tarde' };
+
+  function pintarSala(r) {
+    /*
+     * `data-listo`: la respuesta LLEGÓ. Sin esta marca, un check de «el asesor no
+     * tiene pestañas» encuentra las pestañas escondidas —como nacen— antes de que
+     * conteste el servidor y pasa siempre, diga lo que diga el código.
+     */
+    UI.id('salaPestanas').setAttribute('data-listo', '1');
+    /*
+     * 🔴 Un RECHAZO del servidor con la lista ya en pantalla NO la borra. Sin esto,
+     * un error pasajero en un refresco escondía las pestañas y mostraba el pozo: al
+     * jefe le desaparecía su equipo en plena reunión, como si no tuviera gente.
+     */
+    if (r && r.ok === false && CTX.sala.d) {
+      UI.toast(r.message || 'No se pudo actualizar la lista de su equipo.', 'error');
+      return;
+    }
+    var tiene = !!(r && r.ok && r.personas && r.personas.length);
+    UI.mostrar(UI.id('salaPestanas'), tiene);
+    if (!tiene) {
+      // Un asesor no tiene a quién revisar: ni pestañas ni lista. Su pozo, como siempre.
+      UI.mostrar(UI.id('bloqueEquipo'), false);
+      UI.mostrar(UI.id('bloqueFestejo'), true);
+      /*
+       * 🔴 Y deja de preguntar. La lista lee dos planillas y la producción del equipo
+       * lee la de Matrículas del CRM: con 40 asesores refrescando cada minuto algo
+       * que para ellos siempre viene vacío, son 40 lecturas por minuto justo en la
+       * reunión, cuando Apps Script está más cargado. Solo con una respuesta VÁLIDA:
+       * si fue un error, se vuelve a intentar en el próximo refresco.
+       */
+      if (r && r.ok) apagarRefrescos();
+      return;
+    }
+    // La producción del equipo recién se pide cuando se sabe que HAY equipo.
+    if (!SALA.timerProd) {
+      cargarProd();
+      SALA.timerProd = setInterval(function () { if (!document.hidden) cargarProd(); }, PROD_MS);
+    }
+    pintarLista('sala', r);
+    var ps = r.personas;
+    var cuenta = function (s) { return ps.filter(function (p) { return !p.entroDespues && situ(p) === s; }).length; };
+    var pend = pendientes('sala');
+
+    UI.id('equipoSub').textContent = (TXT_TURNO[r.turno] || r.turno) +
+      (r.inicioHora ? ' · ' + r.inicioHora + ':00' : '') + ' · ' + ps.length + (ps.length === 1 ? ' persona' : ' personas');
+    var ausentes = cuenta('AUSENTE') + ps.filter(function (p) { return p.entroDespues; }).length;
+    var chip = function (n, uno, varios, clase) {
+      return n ? '<span class="chip' + (clase ? ' ' + clase : '') + '">' + n + ' ' + (n === 1 ? uno : varios) + '</span>' : '';
+    };
+    UI.id('equipoChips').innerHTML =
+      chip(cuenta('PRESENTE'), 'presente', 'presentes', 'chip-verde') +
+      chip(cuenta('TARDE'), 'tarde', 'tarde', 'chip-ambar') +
+      chip(cuenta('ENTRANDO'), 'entrando', 'entrando', 'chip-azul') +
+      chip(cuenta('SIN_ENTRAR'), 'sin entrar', 'sin entrar', '') +
+      chip(ausentes, 'ausente', 'ausentes', 'chip-rojo') +
+      '<span class="chip">' + pend + ' sin revisar</span>';
+    UI.id('equipoAviso').innerHTML = r.puedeEditar ? '' :
+      '<div class="aviso aviso-info"><span class="material-symbols-rounded">lock_clock</span><span>' +
+      UI.esc(r.motivoCerrado || '') + '</span></div>';
+
+    var n = UI.id('pestEquipoN');
+    n.textContent = pend ? pend + ' sin revisar' : '';
+    UI.mostrar(n, pend > 0);
+
+    pintarEntrar(r);
+    aplicarPestana();
+  }
+
+  /** «Todavía no entraron»: en vivo, para escribirles antes de que sea falta. */
+  function pintarEntrar(r) {
+    var cont = UI.id('equipoEntrar');
+    if (!r.enCurso) { cont.innerHTML = ''; return; }
+    var faltan = r.personas.filter(function (p) { return situ(p) === 'SIN_ENTRAR'; }).sort(orden);
+    if (!faltan.length) {
+      cont.innerHTML = '<div class="aviso aviso-ok"><span class="material-symbols-rounded">check_circle</span>' +
+        '<span>Todo su equipo entró a la sala.</span></div>';
+      return;
+    }
+    cont.innerHTML = '<section class="eq-entrar">' +
+      '<h5><span class="eq-latido"></span> Todavía no entraron a la sala <span class="eq-dim">· ' + faltan.length + '</span></h5>' +
+      '<div class="eq-entrar-grilla">' + faltan.map(function (p) {
+        return '<div class="eq-entrar-it" data-email="' + UI.esc(p.email) + '">' + UI.avatar(p.foto, p.nombre, 'avatar-mini') +
+          '<span class="eq-entrar-nom"><b>' + UI.esc(p.nombre) + '</b><span class="eq-dim">' + UI.esc(p.cargo) + '</span></span>' +
+          waBoton(waUrl(p.telefono, 'Hola ' + p.nombre + ', la reunión ya empezó. ¿Tiene algún inconveniente para entrar?'),
+            'WhatsApp', 'Escribirle por WhatsApp') +
+        '</div>';
+      }).join('') + '</div>' +
+    '</section>';
+  }
+
+  /** La producción del equipo que no está en el pozo: solo para recordársela. */
+  function pintarProd() {
+    var cont = UI.id('equipoProd');
+    if (!cont) return;
+    if (SALA.prod === null) { cont.innerHTML = '<p class="pozo-vacio">Buscando en el CRM…</p>'; return; }
+    if (SALA.prodError) {
+      cont.innerHTML = '<p class="pozo-vacio pozo-error">No se pudo revisar el CRM: ' + UI.esc(SALA.prodError) + '</p>';
+      return;
+    }
+    if (!SALA.prod.length) { cont.innerHTML = '<p class="pozo-vacio">Nadie de su equipo tiene producción sin cargar.</p>'; return; }
+    cont.innerHTML = SALA.prod.map(function (it) {
+      var abono = it.tipo === 'abono';
+      return '<div class="pozo-tarjeta eq-prod-it">' +
+        '<div class="pt-cab">' + UI.avatar(it.foto, it.asesor, 'avatar-mini') +
+          '<span class="eq-nom">' + UI.esc(it.asesor) + '</span>' +
+          '<span class="chip ' + (abono ? 'chip-ambar' : 'chip-verde') + '">' + (abono ? 'Abono' : 'Matrícula') + '</span>' +
+        '</div>' +
+        '<p class="pt-usuario"><span>Usuario:</span> ' + (it.alumno ? UI.esc(it.alumno) : '<em>(sin nombre)</em>') + '</p>' +
+        '<p class="pt-linea">' + [it.titular ? 'Titular: ' + UI.esc(it.titular) : '', it.planTxt ? UI.esc(it.planTxt) : '',
+          it.ciudad ? UI.esc(it.ciudad) : ''].filter(function (x) { return !!x; }).join(' · ') + '</p>' +
+        waBoton(waUrl(it.telefonoAsesor, 'Hola ' + it.asesor + ', en el CRM está ' + (abono ? 'el abono' : 'la matrícula') +
+          (it.alumno ? ' de ' + it.alumno : '') + '. Cárguela al pozo desde su portal antes de la ceremonia.'),
+          'Recordarle', 'Escribirle por WhatsApp para que la cargue') +
+      '</div>';
+    }).join('');
+  }
+
+  function aplicarPestana() {
+    var conPestanas = !UI.id('salaPestanas').classList.contains('oculto');
+    var eq = conPestanas && SALA.pestana === 'equipo';
+    UI.mostrar(UI.id('bloqueEquipo'), eq);
+    UI.mostrar(UI.id('bloqueFestejo'), !eq);
+    Array.prototype.forEach.call(document.querySelectorAll('.sala-pest'), function (b) {
+      var activa = b.getAttribute('data-pest') === SALA.pestana;
+      b.classList.toggle('activa', activa);
+      b.setAttribute('aria-selected', activa ? 'true' : 'false');
+    });
+  }
+
+  function cargarSala() {
+    // Una consulta a la vez: con la planilla lenta, dos en vuelo pintarían en desorden.
+    if (SALA.pidiendo) return;
+    SALA.pidiendo = true;
+    API.get({ accion: 'verificacion', token: Sesion.token })
+      .then(pintarSala)
+      .catch(function () { /* se reintenta en el próximo refresco */ })
+      .then(function () { SALA.pidiendo = false; });
+  }
+
+  function cargarProd() {
+    API.get({ accion: 'pozoEquipo', token: Sesion.token })
+      .then(function (r) {
+        if (r && r.ok) { SALA.prod = r.items || []; SALA.prodError = ''; }
+        else { SALA.prod = []; SALA.prodError = (r && r.message) || 'No se pudo leer el CRM.'; }
+      })
+      .catch(function (e) { SALA.prod = []; SALA.prodError = (e && e.message) || 'Error de conexión.'; })
+      .then(pintarProd);
+  }
+
+  /*
+   * ⚠️ El refresco NO pisa una fila que se está escribiendo: repintar borraría el
+   * motivo a medio tipear. Espera al próximo turno.
+   */
+  function refrescar() {
+    if (document.hidden) return;
+    if (Object.keys(CTX.sala.modo).length || CTX.sala.enviando) return;
+    cargarSala();
+  }
+
+  function apagarRefrescos() {
+    clearInterval(SALA.timer); clearInterval(SALA.timerProd);
+    SALA.timer = SALA.timerProd = null;
+  }
+
+  return {
+    pintarLista: pintarLista,
+    pendientes: pendientes,
+    alClic: alClic,
+    /** Al entrar a una sala: la lista de ahora y la producción del equipo. */
+    entrarSala: function () {
+      CTX.sala = nuevo('equipoLista');
+      UI.id('salaPestanas').removeAttribute('data-listo');
+      SALA.prod = null; SALA.prodError = '';
+      UI.id('equipoLista').innerHTML = '';
+      pintarProd();
+      apagarRefrescos();
+      cargarSala();
+      // La producción del equipo NO se pide acá: recién cuando la lista dice que hay equipo.
+      SALA.timer = setInterval(refrescar, REFRESCO_MS);
+    },
+    salirSala: function () {
+      apagarRefrescos();
+      CTX.sala = nuevo('equipoLista');
+      UI.mostrar(UI.id('salaPestanas'), false);
+      UI.mostrar(UI.id('bloqueEquipo'), false);
+      UI.mostrar(UI.id('bloqueFestejo'), true);
+    },
+    elegirPestana: function (p) {
+      SALA.pestana = p === 'produccion' ? 'produccion' : 'equipo';
+      aplicarPestana();
+      // Al volver a «Mi equipo» se trae lo último: puede haber entrado alguien.
+      if (SALA.pestana === 'equipo') refrescar();
+    }
+  };
+})();
+
+/* ══════════════════════════════════════════════════════════════════════════
    Asistencia
    ══════════════════════════════════════════════════════════════════════════ */
 var Asistencia = (function () {
   /*
-   * ── La lista de verificación ───────────────────────────────────────────────
+   * ── La lista de verificación (pestaña Asistencia) ──────────────────────────
+   *
+   * Desde el paso 4 (sep 2026) la lista la pinta `Equipo`, el MISMO código que la
+   * pestaña «Mi equipo» de la sala. Acá quedan la caja, la fecha y el turno: esta
+   * pestaña sirve para revisar OTRA reunión (el Director, que no tiene plazo).
    *
    * 🔴 Todo lo que decide algo lo decide el SERVIDOR: a quién se puede tildar
    * (`personas`), si el turno sigue abierto (`puedeEditar`) y qué vale hoy para cada
-   * uno (`estado`). Acá no se recalcula ninguna de las tres. Si el navegador
-   * dedujera, por ejemplo, el plazo por su reloj, la pantalla mostraría los botones
-   * habilitados y el servidor los rechazaría uno por uno, sin que se entienda por qué.
-   *
-   * ⚠️ El motivo para marcar ausente se pide EN LA FILA, no con `prompt()`: la
-   * reunión se proyecta y una ventana del navegador queda encima de todo, además de
-   * que algunos navegadores la bloquean y el clic no haría nada.
+   * uno (`situacion`). Si el navegador dedujera, por ejemplo, el plazo por su reloj,
+   * la pantalla mostraría los botones habilitados y el servidor los rechazaría uno
+   * por uno, sin que se entienda por qué.
    */
-  var V = { fecha: '', turno: '', personas: [], puedeEditar: false,
-            pidiendo: '', pidiendoModo: '', enviando: '' };
-
-  function estadoChip(p) {
-    if (p.estado === 'PRESENTE') {
-      return '<span class="chip chip-verde">Presente</span>' +
-        (p.revisado ? '' : ' <span class="chip">sin revisar</span>');
-    }
-    return '<span class="chip chip-rojo">Ausente</span>' +
-      (p.revisado ? '' : ' <span class="chip">sin revisar</span>');
-  }
-
-  /*
-   * En qué sala se lo registró. Puede ser más de una en el mismo turno: desde sep
-   * 2026 el Director usa la sala que le convenga según la estrategia del día, así
-   * que "estuvo" sin "dónde" no alcanza para revisar nada.
-   */
-  function salasDe(p) {
-    var s = p.salas || [];
-    if (!s.length) return '';
-    return '<br><span style="color:var(--txt-dim)">En ' + UI.esc(s.join(' · ')) + '</span>';
-  }
-
-  function origen(p) {
-    var obs = p.observacion
-      ? '<br><span class="verif-obs">' + UI.esc(p.observacion) + '</span>' : '';
-    if (p.revisado) {
-      return 'Lo marcó ' + UI.esc(p.por) + (p.cuando ? ' · ' + UI.hora(p.cuando) : '') +
-        (p.motivo ? '<br><span style="color:var(--txt-dim)">Motivo: ' + UI.esc(p.motivo) + '</span>' : '') +
-        obs + salasDe(p);
-    }
-    // Sin revisar: se dice qué vio el portal, que es de dónde sale el valor de hoy.
-    return (p.automatico === 'VALIDADO'
-      ? 'El portal lo registró' + (p.ingreso ? ' ' + UI.hora(p.ingreso) : '')
-      : '<span style="color:var(--txt-dim)">El portal no lo registró</span>') + salasDe(p);
-  }
-
   function pintarVerif(r) {
     var caja = UI.id('verifCaja');
     /*
@@ -2979,17 +3582,12 @@ var Asistencia = (function () {
      *
      * ⚠️ No es decoración: sin esa marca, un check que mire si la caja está escondida
      * la encuentra escondida ANTES de que el servidor conteste y pasa siempre, diga lo
-     * que diga el código. Le pasó al check del asesor, y se vio recién al romperlo a
-     * propósito: el modo "mostrar la caja aunque no haya gente" seguía en verde.
+     * que diga el código.
      */
     caja.setAttribute('data-listo', '1');
     /*
-     * 🔴 Un RECHAZO del servidor se muestra; no se esconde la caja.
-     *
-     * "No tengo gente a cargo" y "el servidor no aceptó lo que pediste" se veían
-     * igual —la caja desaparecía—, así que elegir una fecha que el servidor rechaza
-     * (una reunión que todavía no pasó) borraba la lista de la pantalla sin decir por
-     * qué, y el jefe se quedaba sin forma de volver.
+     * 🔴 Un RECHAZO del servidor se muestra; no se esconde la caja: "no tengo gente a
+     * cargo" y "el servidor no aceptó lo que pediste" no pueden verse igual.
      */
     if (r && r.ok === false) {
       UI.mostrar(caja, true);
@@ -3004,87 +3602,26 @@ var Asistencia = (function () {
     if (!r || !r.ok || !r.personas || !r.personas.length) { UI.mostrar(caja, false); return; }
     UI.mostrar(caja, true);
 
-    V.fecha = r.fecha; V.turno = r.turno; V.personas = r.personas; V.puedeEditar = !!r.puedeEditar;
     UI.id('verifFecha').value = r.fecha;
     // El tope lo manda el servidor (ver `hoy` en verificacionLista_): una reunión que
     // todavía no pasó no se verifica, y así ni se puede elegir.
     if (r.hoy) UI.id('verifFecha').max = r.hoy;
     UI.id('verifTurno').value = r.turno;
 
-    var faltan = r.personas.filter(function (p) { return !p.revisado; }).length;
+    Equipo.pintarLista('asis', r);
+    var faltan = Equipo.pendientes('asis');
     UI.id('verifSubtitulo').innerHTML = r.personas.length + ' en su equipo · ' +
       (faltan ? '<b>' + faltan + ' sin revisar</b>' : 'todos revisados');
-
     UI.id('verifAviso').innerHTML = r.puedeEditar ? '' :
       '<div class="aviso aviso-info"><span class="material-symbols-rounded">lock_clock</span>' +
       '<span>' + UI.esc(r.motivoCerrado) + '</span></div>';
-
-    UI.id('verifTabla').innerHTML =
-      '<div class="tabla-scroll"><table><thead><tr>' +
-        '<th>Nombre</th><th>Cargo</th><th>Asistencia</th><th>De dónde sale</th><th></th>' +
-      '</tr></thead><tbody>' +
-      r.personas.map(function (p) {
-        var pidiendo = V.pidiendo === p.email ? V.pidiendoModo : '';
-        return '<tr data-email="' + UI.esc(p.email) + '">' +
-          '<td style="font-weight:600">' + UI.esc(p.nombre) + '</td>' +
-          '<td style="color:var(--txt-dim);font-size:12.5px">' + UI.esc(p.cargo) + '</td>' +
-          '<td>' + estadoChip(p) + '</td>' +
-          '<td style="font-size:12.5px">' + origen(p) + '</td>' +
-          '<td style="text-align:right;white-space:nowrap">' +
-            /*
-             * 🔴 Lo que se escribe va EN LA FILA, nunca con `prompt()`: la reunión se
-             * proyecta, una ventana del navegador queda encima de todo, y algunos
-             * navegadores directamente la bloquean —el clic no haría nada—.
-             *
-             * Dos campos distintos a propósito (sep 2026):
-             *   · MOTIVO       solo al marcar ausente, y es OBLIGATORIO: lo que queda
-             *                  escrito es que un jefe afirmó que faltó.
-             *   · OBSERVACIÓN  opcional y para los dos casos. Con Meet afuera el
-             *                  portal no ve la cámara de nadie, así que esto es lo
-             *                  único que deja constancia de "estuvo pero no encendió
-             *                  cámara" o "mejorar marca personal".
-             */
-            (!V.puedeEditar ? '' : pidiendo === 'ausente'
-              ? '<span class="verif-motivo">' +
-                  '<input type="text" class="verif-texto" data-motivo="' + UI.esc(p.email) + '" ' +
-                    'placeholder="¿Por qué faltó?" maxlength="120">' +
-                  '<input type="text" class="verif-texto" data-obs="' + UI.esc(p.email) + '" ' +
-                    'placeholder="Observación (opcional)" maxlength="300">' +
-                  '<button class="btn btn-peligro" data-guardar="' + UI.esc(p.email) + '">Guardar</button>' +
-                  '<button class="btn" data-cancelar="1">Cancelar</button>' +
-                '</span>'
-              : pidiendo === 'presente'
-              ? '<span class="verif-motivo">' +
-                  '<input type="text" class="verif-texto" data-obs="' + UI.esc(p.email) + '" ' +
-                    'placeholder="Observación (opcional)" maxlength="300">' +
-                  '<button class="btn btn-primario" data-guardar-ok="' + UI.esc(p.email) + '">Guardar</button>' +
-                  '<button class="btn" data-cancelar="1">Cancelar</button>' +
-                '</span>'
-              : '<button class="btn" data-presente="' + UI.esc(p.email) + '" title="Estuvo en la reunión">' +
-                  '<span class="material-symbols-rounded">check_circle</span> Presente</button> ' +
-                '<button class="btn" data-observar="' + UI.esc(p.email) + '" title="Anotar una observación">' +
-                  '<span class="material-symbols-rounded">edit_note</span></button> ' +
-                '<button class="btn" data-ausente="' + UI.esc(p.email) + '" title="No estuvo">' +
-                  '<span class="material-symbols-rounded">cancel</span> Ausente</button>') +
-          '</td>' +
-        '</tr>';
-      }).join('') +
-      '</tbody></table></div>';
-
-    if (V.pidiendo) {
-      var caja2 = UI.$('[data-motivo="' + V.pidiendo + '"]') ||
-                  UI.$('[data-obs="' + V.pidiendo + '"]');
-      if (caja2) caja2.focus();
-    }
   }
 
   /*
    * 🔴 Al ABRIR no se manda ni fecha ni turno: los elige el SERVIDOR, que es el único
    * que sabe qué reunión corre (y con qué reloj). La primera versión mandaba lo que
    * tenía el desplegable —MAÑANA, su primera opción— así que a las 14:00 la lista
-   * abría en la reunión de la mañana, ya cerrada: los botones no aparecían y parecía
-   * que el jefe no tenía permiso. Lo encontró el test del navegador, no el
-   * razonamiento: el backend respondía perfecto a lo que se le preguntaba.
+   * abría en la reunión de la mañana, ya cerrada.
    */
   function cargarVerif(desdeControles) {
     var fecha = desdeControles ? (UI.id('verifFecha').value || '') : '';
@@ -3092,10 +3629,8 @@ var Asistencia = (function () {
     API.get({ accion: 'verificacion', token: Sesion.token, fecha: fecha, turno: turno })
       .then(pintarVerif)
       /*
-       * 🔴 El fallo NO se traga. Antes este `catch` estaba vacío "porque el historial
-       * de abajo ya avisa", y eso dejaba al jefe mirando una pantalla sin lista sin
-       * saber si es que no tiene gente a cargo o si no se pudo cargar — dos cosas muy
-       * distintas cuando lo que hay que hacer es revisar la asistencia de su equipo.
+       * 🔴 El fallo NO se traga: el jefe no puede quedarse mirando una pantalla sin
+       * lista sin saber si no tiene gente a cargo o si no se pudo cargar.
        */
       .catch(function (e) {
         var caja = UI.id('verifCaja');
@@ -3109,93 +3644,7 @@ var Asistencia = (function () {
       });
   }
 
-  /** Apaga o devuelve los botones de la tabla mientras una corrección viaja. */
-  function botonesVerif(apagados) {
-    var t = UI.id('verifTabla');
-    if (!t) return;
-    var bs = t.querySelectorAll('button');
-    for (var i = 0; i < bs.length; i++) bs[i].disabled = apagados;
-  }
-
-  function marcar(email, presente, motivo, observacion) {
-    /*
-     * 🔴 Escribe: NO se reintenta sola (ver POST_REPETIBLE). Un reintento agregaría
-     * otra fila con la misma corrección: no cambia el resultado, pero ensucia el
-     * registro de quién la hizo y cuándo.
-     *
-     * ⚠️ Y el DOBLE CLIC hace exactamente eso mismo, que es lo que el párrafo de
-     * arriba dice querer evitar: dos POST salen igual de rápido que uno. Los botones
-     * se apagan hasta que el servidor conteste; el repintado los devuelve nuevos, y
-     * si la respuesta fue un rechazo se rehabilitan acá (ahí no hay repintado).
-     */
-    if (V.enviando) return Promise.resolve();
-    V.enviando = email;
-    botonesVerif(true);
-
-    return API.post({
-      accion: 'verificarAsistencia', token: Sesion.token,
-      email: email, presente: presente, motivo: motivo || '',
-      observacion: observacion || '',
-      fecha: V.fecha, turno: V.turno
-    }).then(function (r) {
-      if (!r || !r.ok) { UI.toast((r && r.message) || 'No se pudo guardar.', 'error'); return; }
-      V.pidiendo = ''; V.pidiendoModo = '';
-      pintarVerif(r);
-      UI.toast(presente ? 'Marcado presente.' : 'Marcado ausente.', 'ok');
-    }).catch(function (e) {
-      UI.toast(e.message || 'Error de conexión.', 'error');
-    }).then(function () {
-      V.enviando = '';
-      botonesVerif(false);
-    });
-  }
-
-  /** Repinta la tabla con lo que ya está en memoria (abrir o cerrar una fila). */
-  function repintarVerif() {
-    pintarVerif({ ok: true, fecha: V.fecha, turno: V.turno, puedeEditar: V.puedeEditar,
-                  motivoCerrado: '', personas: V.personas });
-  }
-
-  function valorDe(sel, email) {
-    var caja = UI.$('[' + sel + '="' + email + '"]');
-    return caja ? caja.value.trim() : '';
-  }
-
-  function alClic(ev) {
-    var b = ev.target.closest && ev.target.closest('button');
-    if (!b) return;
-
-    // Confirmar presente, sin decir nada más: es el camino de todos los días.
-    if (b.getAttribute('data-presente')) { marcar(b.getAttribute('data-presente'), true); return; }
-
-    // Presente PERO con algo que decir ("no encendió cámara", "mejorar marca").
-    if (b.getAttribute('data-observar')) {
-      V.pidiendo = b.getAttribute('data-observar'); V.pidiendoModo = 'presente';
-      repintarVerif();
-      return;
-    }
-    if (b.getAttribute('data-ausente')) {
-      V.pidiendo = b.getAttribute('data-ausente'); V.pidiendoModo = 'ausente';
-      repintarVerif();
-      return;
-    }
-    if (b.getAttribute('data-cancelar')) {
-      V.pidiendo = ''; V.pidiendoModo = '';
-      repintarVerif();
-      return;
-    }
-
-    var okEmail = b.getAttribute('data-guardar-ok');
-    if (okEmail) { marcar(okEmail, true, '', valorDe('data-obs', okEmail)); return; }
-
-    var email = b.getAttribute('data-guardar');
-    if (email) {
-      var texto = valorDe('data-motivo', email);
-      // El servidor lo exige igual; acá se avisa sin gastar un viaje.
-      if (texto.length < 4) { UI.toast('Escriba el motivo para marcar ausente.', 'error'); return; }
-      marcar(email, false, texto, valorDe('data-obs', email));
-    }
-  }
+  function alClic(ev) { Equipo.alClic('asis', ev); }
 
   function cargar() {
     cargarVerif();
@@ -3252,7 +3701,7 @@ var Asistencia = (function () {
       '</tbody></table></div>';
   }
 
-  return { cargar: cargar, alClic: alClic, cargarVerif: cargarVerif };
+  return { cargar: cargar, alClic: alClic, cargarVerif: cargarVerif, pintarVerif: pintarVerif };
 })();
 
 
@@ -3496,6 +3945,10 @@ var App = (function () {
     // Delegado sobre la tabla: se repinta entera en cada marcado, así que los botones
     // de cada fila no existen todavía cuando esto corre.
     UI.id('verifTabla').addEventListener('click', Asistencia.alClic);
+    UI.id('equipoLista').addEventListener('click', function (ev) { Equipo.alClic('sala', ev); });
+    Array.prototype.forEach.call(document.querySelectorAll('.sala-pest'), function (b) {
+      b.addEventListener('click', function () { Equipo.elegirPestana(b.getAttribute('data-pest')); });
+    });
     // `true`: acá sí manda lo que eligió la persona, que es de lo que se trata.
     UI.id('verifFecha').addEventListener('change', function () { Asistencia.cargarVerif(true); });
     UI.id('verifTurno').addEventListener('change', function () { Asistencia.cargarVerif(true); });
