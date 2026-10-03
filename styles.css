@@ -1730,6 +1730,10 @@ tbody tr:hover { background: var(--surface); }
 .eq-hora { font-variant-numeric: tabular-nums; color: var(--txt); font-weight: 600; }
 .eq-rojo { color: var(--txt-rojo); font-weight: 600; }
 .eq-rev { font-style: italic; }
+/* El tilde ya se ve marcado; esto dice que todavía viaja al servidor. */
+.eq-guardando { font-style: italic; color: var(--txt-dim); animation: eq-guardando 1.2s ease-in-out infinite; }
+@keyframes eq-guardando { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .eq-guardando { animation: none; } }
 
 .eq-botones { display: flex; gap: 6px; align-items: flex-start; flex-wrap: wrap; margin-left: auto; }
 .eq-est-col { display: grid; justify-items: center; gap: 2px; }

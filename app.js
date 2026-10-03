@@ -878,10 +878,17 @@ var UI = (function () {
    * traducir mentalmente y deja lugar a la duda que veníamos a sacar. De paso,
    * ese formato termina en punto y dejaba un ".." al lado del texto.
    */
+  /*
+   * 🔴 Y en HORA DE BOLIVIA, no la del dispositivo (oct 2026). Sin `timeZone`, una
+   * compu con la zona horaria mal puesta —o alguien conectado desde afuera— veía
+   * «Ingreso 12:02» donde la planilla dice 08:02: justo en la pantalla de la
+   * puntualidad. El servidor ya escribe todo en America/La_Paz (`horaDe_`).
+   */
   function hora(ts) {
     if (!ts) return '—';
     var d = new Date(ts);
-    return d.toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit', hour12: false });
+    return d.toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit', hour12: false,
+                                           timeZone: 'America/La_Paz' });
   }
 
   return { $: $, id: id, esc: esc, mostrar: mostrar, toast: toast, rastro: rastro,
@@ -940,29 +947,64 @@ var Pozo = (function () {
 
   /* ⚠️ Si no se pudo leer el CRM, la lista LO DICE en vez de mostrarse vacía: "no
      hay ninguna sin cargar" le decía a la persona que ya había cargado todo. */
-  function pedirRecientes() {
-    P.recientes = null;
-    P.recientesError = '';
-    pintarListas();
+  /*
+   * ⚠️ `silencioso` = el refresco de fondo (volver a la pestaña, el reloj de 2 min):
+   * no borra la lista para poner «Buscando…» ni la cambia por un error si ya había
+   * una. Si parpadeara cada dos minutos, la persona perdería de vista el botón que
+   * iba a tocar.
+   */
+  function pedirRecientes(silencioso) {
+    if (!silencioso) {
+      P.recientes = null;
+      P.recientesError = '';
+      pintarListas();
+    }
+    P.recientesPedido = Date.now();
     return API.get({ accion: 'pozoRecientes', token: Sesion.token })
       .then(function (r) {
-        if (r && r.ok) { P.recientes = r.items || []; return; }
+        if (r && r.ok) { P.recientes = r.items || []; P.recientesError = ''; return; }
+        if (silencioso && P.recientes) return;
         P.recientes = [];
         P.recientesError = (r && r.message) || 'No se pudo leer el CRM.';
       })
       .catch(function (e) {
+        if (silencioso && P.recientes) return;
         P.recientes = [];
         P.recientesError = (e && e.message) || 'Error de conexión.';
       })
       .then(pintarListas);
   }
 
+  /*
+   * 🔴 LAS LISTAS DEL CRM SE REFRESCAN SOLAS (oct 2026). Antes se pedían UNA vez al
+   * entrar a la sala: quien registraba la matrícula en el CRM con la sala ya abierta
+   * —lo normal: termina la videollamada, llena el formulario y vuelve— no la veía en
+   * «Listas para cantar» hasta salir y volver a entrar, y lo leía como que el portal
+   * no traía la matrícula. Ahora se piden al volver a esta pestaña (que es justo
+   * cuando viene de llenar el formulario) y cada 2 min mientras se la mira.
+   *
+   * ⚠️ Con un freno de 20 s entre pedidos: ir y volver de Meet varias veces seguidas
+   * no puede mandar una lectura de la planilla del CRM por cada vuelta.
+   */
+  var POZO_REFRESCO_MS = 2 * 60 * 1000;
+  var POZO_FRENO_MS = 20 * 1000;
+
+  function alVolver() {
+    if (!P.activo || document.hidden) return;
+    if (Date.now() - (P.recientesPedido || 0) < POZO_FRENO_MS) return;
+    refrescar();
+    pedirRecientes(true);
+  }
+
   /** Al entrar a una sala: lo mío y las listas del CRM. */
   function entrar() {
     P.buscado = null;
+    P.activo = true;
     pintarBuscado();
     refrescar();
     pedirRecientes();
+    clearInterval(P.timer);
+    P.timer = setInterval(alVolver, POZO_REFRESCO_MS);
   }
 
   function chip(tipo) {
@@ -982,7 +1024,8 @@ var Pozo = (function () {
       '<p class="pt-usuario"><span>' + (usuarios.length > 1 ? 'Usuarios' : 'Usuario') + ':</span> ' +
         (usuarios.length ? UI.esc(usuarios.join(' y ')) : '<em>(sin nombre del usuario)</em>') + '</p>' +
       (it.titular ? '<p class="pt-linea">Titular: ' + UI.esc(it.titular) + '</p>' : '') +
-      '<p class="pt-linea">' + [it.ciudad ? UI.esc(it.ciudad) : '', it.telefono ? 'Tel: ' + UI.esc(it.telefono) : '']
+      '<p class="pt-linea">' + [it.origen ? 'Origen: ' + UI.esc(it.origen) : '', it.ciudad ? UI.esc(it.ciudad) : '',
+        it.telefono ? 'Tel: ' + UI.esc(it.telefono) : '']
         .filter(function (x) { return !!x; }).join(' · ') + '</p>' +
     '</div>';
   }
@@ -1144,10 +1187,12 @@ var Pozo = (function () {
   }
 
   return {
-    cuantas: cuantas, refrescar: refrescar, entrar: entrar, conectar: conectar,
+    cuantas: cuantas, refrescar: refrescar, entrar: entrar, conectar: conectar, alVolver: alVolver,
     /* ⚠️ Al salir de la sesión: la pantalla del pozo no puede quedar mostrando lo de
        la sesión anterior. */
     limpiar: function () {
+      P.activo = false;
+      clearInterval(P.timer); P.timer = null;
       P.pendientes = []; P.destapadas = []; P.recientes = null; P.recientesError = ''; P.buscado = null;
       ['pozoCuerpo', 'pozoListas', 'pozoBuscarRes'].forEach(function (id) { var c = UI.id(id); if (c) c.innerHTML = ''; });
     }
@@ -2158,6 +2203,9 @@ var Sala = (function () {
         (cajas ? '<div class="td-par">' + cajas + '</div>' : '') +
         (t.ciudad ? '<p class="td-ciudad" id="celCiudad"><span class="material-symbols-rounded">location_on</span>' +
                     UI.esc(t.ciudad) + '</p>' : '') +
+        // De dónde vino el lead (oct 2026, decisión del dueño: se proyecta).
+        (t.origen ? '<p class="td-ciudad td-origen" id="celOrigen"><span class="material-symbols-rounded">campaign</span>' +
+                    'Origen: ' + UI.esc(t.origen) + '</p>' : '') +
       '</div>' +
     '</article>';
   }
@@ -2826,13 +2874,30 @@ var Dashboard = (function () {
     offline: { chip: 'chip', txt: 'Sin abrir' }
   };
 
+  /*
+   * 🔴 UN pedido por vez, nada con la pestaña escondida, y UN aviso por caída (oct
+   * 2026). Era un `setInterval` de 12 s sin freno: con Apps Script lento (cada pedido
+   * tarda ~2 s en el mejor caso, y mucho más saturado) se encimaban, cada caída de
+   * red tiraba un cartel rojo cada 12 s, y la pestaña escondida —la gente está en
+   * Meet— seguía preguntando por una pantalla que nadie mira.
+   */
+  var enVuelo = false, avisoCaida = false;
+
   function cargar() {
+    if (enVuelo || document.hidden) return;
+    enVuelo = true;
     API.get({ accion: 'salas', token: Sesion.token })
       .then(function (r) {
         if (!r || !r.ok) return;
+        avisoCaida = false;
         pintar(r.salas);
       })
-      .catch(function (e) { UI.toast(e.message || 'No se pudieron leer las salas.', 'error'); });
+      .catch(function (e) {
+        if (avisoCaida) return;
+        avisoCaida = true;
+        UI.toast(e.message || 'No se pudieron leer las salas.', 'error');
+      })
+      .then(function () { enVuelo = false; });
   }
 
   /*
@@ -2850,7 +2915,7 @@ var Dashboard = (function () {
 
   function pintar(salas) {
     var cont = UI.id('grillaSalas');
-    cont.innerHTML = salas.map(function (s) {
+    var html = salas.map(function (s) {
       var e = ESTADO[s.estado] || ESTADO.offline;
       var img = PORTADA[s.id];
       return '' +
@@ -2881,6 +2946,16 @@ var Dashboard = (function () {
           '</div>' +
         '</button>';
     }).join('');
+
+    /*
+     * 🔴 Si nada cambió, NO se repinta (oct 2026). El sondeo de 12 s reemplazaba la
+     * grilla entera aunque fuera igual: un clic que caía justo en ese instante
+     * (apretar sobre una tarjeta y soltar sobre su reemplazo) no abría nada, y la
+     * persona lo leía como que el portal tarda. Misma idea que `pintarSi` en la sala.
+     */
+    if (cont.getAttribute('data-firma') === html) return;
+    cont.setAttribute('data-firma', html);
+    cont.innerHTML = html;
 
     /*
      * ══════════════════════════════════════════════════════════════════════
@@ -2970,6 +3045,8 @@ var Dashboard = (function () {
       timer = setInterval(cargar, 12000);
     },
     precargar: precargar,
+    /* Al volver a la pestaña, el estado de las salas YA: escondida no se preguntó. */
+    alVolver: function () { if (timer) cargar(); },
     desactivar: function () { clearInterval(timer); timer = null; }
   };
 })();
@@ -3003,7 +3080,8 @@ var Equipo = (function () {
   var REFRESCO_MS = 60 * 1000;
   var PROD_MS = 3 * 60 * 1000;
 
-  function nuevo(cont) { return { cont: cont, d: null, abierto: {}, modo: {}, plegado: {}, enviando: false }; }
+  // pend = tildes sin mandar · envio = la tanda en viaje · antes = cómo estaba cada fila (para revertir)
+  function nuevo(cont) { return { cont: cont, d: null, abierto: {}, modo: {}, plegado: {}, pend: {}, envio: null, antes: {}, borrador: {} }; }
   var CTX = { sala: nuevo('equipoLista'), asis: nuevo('verifTabla') };
   var SALA = { pestana: 'equipo', timer: null, timerProd: null, pidiendo: false, prod: null, prodError: '' };
 
@@ -3088,7 +3166,8 @@ var Equipo = (function () {
     else partes.push('<span class="' + (s === 'AUSENTE' ? 'eq-rojo' : '') + '">El portal no lo registró</span>');
     if (p.salas && p.salas.length) partes.push('En ' + UI.esc(p.salas.join(' · ')));
     // Quién la revisó: gana la última corrección, y sin esto dos jefes se pisan sin enterarse.
-    if (p.revisado) partes.push('<span class="eq-rev">Revisado por ' + UI.esc(p.por) + (p.cuando ? ' · ' + UI.hora(p.cuando) : '') + '</span>');
+    if (p.guardando) partes.push('<span class="eq-guardando">guardando…</span>');
+    else if (p.revisado) partes.push('<span class="eq-rev">Revisado por ' + UI.esc(p.por) + (p.cuando ? ' · ' + UI.hora(p.cuando) : '') + '</span>');
     // 🔴 Y si nadie la revisó, se DICE: «sin revisar» no es lo mismo que «faltó».
     else partes.push('<span class="eq-sinrev">sin revisar</span>');
     return partes.join(' · ');
@@ -3117,7 +3196,7 @@ var Equipo = (function () {
           '<span class="eq-dim">· ' + UI.esc(p.cargo) + '</span>' +
           (p.ingreso ? '<span class="eq-dim">· Ingreso ' + UI.hora(p.ingreso) + '</span>' : '') +
           '<span class="eq-der">' +
-            (p.revisado
+            (p.guardando ? '<span class="eq-guardando">guardando…</span>' : p.revisado
               ? '<span class="eq-rev">Revisado por ' + UI.esc(p.por) + (p.cuando ? ' · ' + UI.hora(p.cuando) : '') + '</span>'
               : '<span class="eq-sinrev">sin revisar</span>') +
             '<span class="material-symbols-rounded eq-tilde">check_circle</span>' +
@@ -3158,8 +3237,9 @@ var Equipo = (function () {
           ? 'Motivo (ej. «Entró a Meet a las 8:14»)'
           : '¿Por qué faltó? (ej. «No estuvo en Meet»)', 120,
           // Si ya estaba marcado así, el motivo que ya tenía: que no tenga que reescribirlo.
-          s === modo ? p.motivo : '') +
-        campoTexto('data-obs', p.email, 'Observación (opcional)', 300, p.observacion) +
+          c.borrador[p.email] ? c.borrador[p.email].motivo : (s === modo ? p.motivo : '')) +
+        campoTexto('data-obs', p.email, 'Observación (opcional)', 300,
+          c.borrador[p.email] ? c.borrador[p.email].obs : p.observacion) +
         '<button type="button" class="btn ' + (modo === 'AUSENTE' ? 'btn-peligro' : 'btn-primario') + '" data-guardar="' + e + '">Guardar</button>' +
         '<button type="button" class="btn" data-cancelar="1">Cancelar</button>' +
         '<span class="eq-lave">La observación la ve la persona.</span>' +
@@ -3252,55 +3332,161 @@ var Equipo = (function () {
 
   /* ── escribir ──────────────────────────────────────────────────────────── */
 
-  function botones(ctx, apagados) {
-    var t = UI.id(CTX[ctx].cont);
-    if (!t) return;
-    Array.prototype.forEach.call(t.querySelectorAll('button'), function (b) { b.disabled = apagados; });
-  }
-
   /** Lo que llega después de escribir se pinta en el lugar de donde salió el pedido. */
   function alResponder(ctx, r) {
     if (ctx === 'asis') Asistencia.pintarVerif(r); else pintarSala(r);
   }
 
   /*
-   * 🔴 Escribe: NO se reintenta sola (ver POST_REPETIBLE) — un reintento agregaría
-   * otra fila con la misma corrección. Y el doble clic haría exactamente eso: los
-   * botones se apagan hasta que el servidor conteste.
+   * ══════════════════════════════════════════════════════════════════════════
+   * 🔴 EL TILDE SE VE AL INSTANTE Y SE GUARDA EN TANDAS (oct 2026).
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * Antes cada tilde esperaba la respuesta (4-5 s en producción: el viaje a Apps
+   * Script, el candado, la escritura y releer la lista) con TODOS los botones
+   * apagados. En el preview el servidor es instantáneo y no se notaba; en la
+   * reunión revisar a 20 personas llevaba minutos.
+   *
+   * Ahora:
+   *   · la fila cambia EN EL ACTO, con «guardando…», y se puede seguir tildando;
+   *   · lo que se toca mientras viaja un pedido se junta y sale en el SIGUIENTE, de
+   *     una vez (`verificarVarios`): 20 toques son 2 o 3 viajes, nunca 20;
+   *   · UN pedido por vez. Dos en paralelo podrían llegar al revés y dejar escrito
+   *     lo primero que se tocó en vez de lo último.
+   *
+   * 🔴 Lo que NO se guarda, SE VE: la fila vuelve a como estaba y un aviso rojo
+   * nombra a la persona. Un tilde que se ve guardado y no lo está es exactamente lo
+   * que esta lista existe para evitar. Ante una falla de red se relee la lista: el
+   * servidor pudo haber guardado igual (el transporte de Apps Script es de un solo
+   * uso, ver `API`), y lo que manda es lo que dice la planilla.
+   *
+   * ⚠️ Escribe y NO se reintenta sola (no está en POST_REPETIBLE): un reintento
+   * agregaría las mismas filas otra vez.
    */
-  function marcar(ctx, email, estado, motivo, observacion) {
-    var c = CTX[ctx];
-    if (c.enviando) return;
-    c.enviando = true;
-    botones(ctx, true);
-    API.post({
-      accion: 'verificarAsistencia', token: Sesion.token,
-      email: email, estado: estado,
-      // `presente` para un backend anterior al paso 4, que no lee `estado`.
-      presente: estado !== 'AUSENTE',
-      motivo: motivo || '', observacion: observacion || '',
-      fecha: c.d.fecha, turno: c.d.turno
-    }).then(function (r) {
-      if (!r || !r.ok) { UI.toast((r && r.message) || 'No se pudo guardar.', 'error'); return; }
-      delete c.modo[email];
-      delete c.abierto[email];
-      alResponder(ctx, r);
-      UI.toast({ PRESENTE: 'Marcado presente.', TARDE: 'Marcado tarde.', AUSENTE: 'Marcado ausente.' }[estado], 'ok');
-    }).catch(function (e) {
-      UI.toast((e && e.message) || 'Error de conexión.', 'error');
-    }).then(function () {
-      c.enviando = false;
-      botones(ctx, false);
+  function ocupado(c) { return !!c.envio || Object.keys(c.pend).length > 0; }
+
+  function miNombre() { return (Sesion.usuario && Sesion.usuario.nombre) || ''; }
+
+  /** Pone la marca sobre la persona, como la va a devolver el servidor. */
+  function aplicarMarca(p, m) {
+    p.situacion = m.estado;
+    p.estado = m.estado === 'AUSENTE' ? 'AUSENTE' : 'PRESENTE';
+    p.revisado = true;
+    p.por = miNombre() || p.por;
+    p.cuando = Date.now();
+    p.motivo = m.estado === 'PRESENTE' ? '' : m.motivo;
+    p.observacion = m.observacion;
+    p.entroDespues = false;
+    p.guardando = true;
+  }
+
+  /** Vuelve a poner encima lo que todavía no se mandó (una lista que llega no lo pisa). */
+  function aplicarPendientes(c, r) {
+    if (!r || !r.personas) return;
+    r.personas.forEach(function (p) {
+      var m = c.pend[p.email];
+      if (m && m.fecha === r.fecha && m.turno === r.turno) aplicarMarca(p, m);
     });
   }
 
+  function marcar(ctx, email, estado, motivo, observacion, soloConfirmar) {
+    var c = CTX[ctx];
+    var p = persona(ctx, email);
+    if (!p || !c.d) return;
+    // La foto de ANTES se toma una sola vez: si se vuelve a tocar antes de guardar,
+    // revertir tiene que volver a lo que dice la planilla, no al tilde anterior.
+    if (!c.antes[email]) c.antes[email] = JSON.parse(JSON.stringify(p));
+    var m = { email: email, estado: estado, motivo: motivo || '', observacion: observacion || '',
+              soloConfirmar: !!soloConfirmar, fecha: c.d.fecha, turno: c.d.turno };
+    c.pend[email] = m;
+    aplicarMarca(p, m);
+    delete c.borrador[email];
+    delete c.modo[email];
+    delete c.abierto[email];
+    alResponder(ctx, c.d);
+    despachar(ctx);
+  }
+
+  function despachar(ctx) {
+    var c = CTX[ctx];
+    if (c.envio) return;
+    var emails = Object.keys(c.pend);
+    if (!emails.length) return;
+    // Una tanda es de UNA reunión: si el Director cambió de fecha a mitad, lo de la
+    // otra sale en la tanda siguiente.
+    var primera = c.pend[emails[0]];
+    var lote = emails.map(function (e) { return c.pend[e]; }).filter(function (m) {
+      return m.fecha === primera.fecha && m.turno === primera.turno;
+    });
+    lote.forEach(function (m) { delete c.pend[m.email]; });
+    c.envio = lote;
+    API.post({
+      accion: 'verificarVarios', token: Sesion.token, fecha: primera.fecha, turno: primera.turno,
+      marcas: lote.map(function (m) {
+        return { email: m.email, estado: m.estado, motivo: m.motivo, observacion: m.observacion,
+                 soloConfirmar: m.soloConfirmar };
+      })
+    }).then(function (r) {
+      if (!r || !r.ok) { fallo(ctx, c, lote, (r && r.message) || 'No se pudo guardar.', false); return; }
+      lote.forEach(function (m) { if (!c.pend[m.email]) delete c.antes[m.email]; });
+      var rech = r.rechazados || [];
+      if (rech.length) {
+        UI.toast('No se guardó: ' + rech.map(function (x) {
+          var q = persona(ctx, x.email);
+          return (q ? q.nombre : x.email) + ' (' + x.motivo + ')';
+        }).join(' · '), 'error', 8000);
+      }
+      // Si el jefe cambió de reunión mientras viajaba, la lista que llega es de la
+      // otra: se guardó igual, pero no se pinta encima de lo que está mirando.
+      if (c !== CTX[ctx]) return;   // salió de la sala mientras viajaba: se guardó, no hay qué pintar
+      if (c.d && (c.d.fecha !== r.fecha || c.d.turno !== r.turno)) return;
+      aplicarPendientes(c, r);
+      alResponder(ctx, r);
+    }).catch(function (e) {
+      fallo(ctx, c, lote, (e && e.message) || 'Error de conexión.', true);
+    }).then(function () {
+      c.envio = null;
+      despachar(ctx);
+    });
+  }
+
+  /** La tanda no se guardó: cada fila vuelve a como estaba y se nombra a quién. */
+  function fallo(ctx, c, lote, mensaje, releer) {
+    var nombres = [];
+    lote.forEach(function (m) {
+      var antes = c.antes[m.email];
+      if (c.pend[m.email]) return;   // la volvió a tocar: esa marca sale en la tanda siguiente
+      delete c.antes[m.email];
+      if (!antes || !c.d || !c.d.personas) return;
+      var i = c.d.personas.map(function (p) { return p.email; }).indexOf(m.email);
+      if (i >= 0 && c.d.fecha === m.fecha && c.d.turno === m.turno) {
+        c.d.personas[i] = antes;
+        /* 🔴 Lo ESCRITO no se pierde: un tarde o un ausente vuelve a abrir su editor con
+           el motivo y la observación que se habían puesto, listo para reintentar. */
+        if (m.estado !== 'PRESENTE' && !m.soloConfirmar) {
+          c.modo[m.email] = m.estado;
+          c.borrador[m.email] = { motivo: m.motivo, obs: m.observacion };
+        }
+      }
+      nombres.push(antes.nombre);
+    });
+    UI.toast('No se guardó' + (nombres.length ? ': ' + nombres.join(', ') : '') + '. ' + mensaje, 'error', 8000);
+    if (c.d && c === CTX[ctx]) alResponder(ctx, c.d);
+    // 🔴 Ante una falla de RED el servidor pudo haber guardado igual: se relee la lista.
+    if (releer && c === CTX[ctx]) {
+      if (ctx === 'sala') cargarSala(true);
+      else Asistencia.cargarVerif(true);
+    }
+  }
+
   /*
-   * «Confirmar los N presentes». Se mandan los que se VEN confirmables; el servidor
-   * vuelve a aplicar la regla y saltea a quien haya cambiado en el medio.
+   * «Confirmar los N presentes». Se marcan al instante los que se VEN confirmables y
+   * van en la misma cola; el servidor vuelve a aplicar la regla (`soloConfirmar`) y
+   * saltea a quien haya cambiado en el medio.
    */
   function confirmar(ctx, clave) {
     var c = CTX[ctx];
-    if (c.enviando || !c.d) return;
+    if (!c.d) return;
     var g = grupos(c.d.personas || []);
     var gente = clave === '__directos' ? g.directos : (function () {
       var eq = g.equipos.filter(function (x) { return x.rama === clave; })[0];
@@ -3309,20 +3495,32 @@ var Equipo = (function () {
       // Plegado, el botón cuenta solo lo que se ve: no se confirma a quien no se miró.
       return (eq.cabeza ? [eq.cabeza] : []).concat(plegado ? [] : eq.gente);
     })();
-    var emails = gente.filter(confirmable).map(function (p) { return p.email; });
-    if (!emails.length) return;
-    c.enviando = true;
-    botones(ctx, true);
-    API.post({ accion: 'confirmarPresentes', token: Sesion.token, emails: emails,
-               fecha: c.d.fecha, turno: c.d.turno })
-      .then(function (r) {
-        if (!r || !r.ok) { UI.toast((r && r.message) || 'No se pudo confirmar.', 'error'); return; }
-        alResponder(ctx, r);
-        UI.toast(r.confirmados === 1 ? 'Confirmado.' : 'Confirmados: ' + (r.confirmados || 0) + '.', 'ok');
-      })
-      .catch(function (e) { UI.toast((e && e.message) || 'Error de conexión.', 'error'); })
-      .then(function () { c.enviando = false; botones(ctx, false); });
+    gente.filter(confirmable).forEach(function (p) {
+      var q = persona(ctx, p.email);
+      if (!q) return;
+      if (!c.antes[p.email]) c.antes[p.email] = JSON.parse(JSON.stringify(q));
+      var m = { email: p.email, estado: 'PRESENTE', motivo: '', observacion: q.observacion || '',
+                soloConfirmar: true, fecha: c.d.fecha, turno: c.d.turno };
+      c.pend[p.email] = m;
+      aplicarMarca(q, m);
+    });
+    alResponder(ctx, c.d);
+    despachar(ctx);
   }
+
+  /*
+   * Al salir con tildes sin mandar: salen YA, aunque haya otro pedido en viaje (el
+   * candado del servidor los ordena). Sin esto, irse de la sala los perdía.
+   */
+  function vaciar(ctx) {
+    var c = CTX[ctx];
+    if (!Object.keys(c.pend).length) return;
+    c.envio = null;   // el contexto se descarta enseguida: no hay orden que cuidar
+    despachar(ctx);
+  }
+
+  /** ¿Queda algo sin guardar en alguna lista? (para avisar al cerrar la pestaña) */
+  function sinGuardar() { return ocupado(CTX.sala) || ocupado(CTX.asis); }
 
   function valor(ctx, attr, email) {
     var campo = UI.id(CTX[ctx].cont).querySelector('[' + attr + '="' + email + '"]');
@@ -3353,7 +3551,7 @@ var Equipo = (function () {
       return;
     }
     if ((email = b.getAttribute('data-confirmar'))) { confirmar(ctx, email); return; }
-    if (b.getAttribute('data-cancelar')) { c.modo = {}; repintar(); return; }
+    if (b.getAttribute('data-cancelar')) { c.modo = {}; c.borrador = {}; repintar(); return; }
 
     // Presente: un toque. Conserva la observación que ya tenía: tocar «Presente» no
     // puede borrar en silencio lo que otro jefe anotó.
@@ -3525,8 +3723,13 @@ var Equipo = (function () {
           '<span class="eq-nom">' + UI.esc(it.asesor) + '</span>' +
           '<span class="chip ' + (abono ? 'chip-ambar' : 'chip-verde') + '">' + (abono ? 'Abono' : 'Matrícula') + '</span>' +
         '</div>' +
-        '<p class="pt-usuario"><span>Usuario:</span> ' + (it.alumno ? UI.esc(it.alumno) : '<em>(sin nombre)</em>') + '</p>' +
+        (function () {
+          var usuarios = [it.alumno, it.alumno2].filter(function (x) { return !!x; });
+          return '<p class="pt-usuario"><span>' + (usuarios.length > 1 ? 'Usuarios:' : 'Usuario:') + '</span> ' +
+            (usuarios.length ? UI.esc(usuarios.join(' y ')) : '<em>(sin nombre)</em>') + '</p>';
+        })() +
         '<p class="pt-linea">' + [it.titular ? 'Titular: ' + UI.esc(it.titular) : '', it.planTxt ? UI.esc(it.planTxt) : '',
+          it.origen ? 'Origen: ' + UI.esc(it.origen) : '',
           it.ciudad ? UI.esc(it.ciudad) : ''].filter(function (x) { return !!x; }).join(' · ') + '</p>' +
         waBoton(waUrl(it.telefonoAsesor, 'Hola ' + it.asesor + ', en el CRM está ' + (abono ? 'el abono' : 'la matrícula') +
           (it.alumno ? ' de ' + it.alumno : '') + '. Cárguela al pozo desde su portal antes de la ceremonia.'),
@@ -3573,7 +3776,8 @@ var Equipo = (function () {
    */
   function refrescar() {
     if (document.hidden) return;
-    if (Object.keys(CTX.sala.modo).length || CTX.sala.enviando) return;
+    // Con tildes guardándose no se relee: la lista vieja taparía lo que el jefe acaba de marcar.
+    if (Object.keys(CTX.sala.modo).length || ocupado(CTX.sala)) return;
     cargarSala();
   }
 
@@ -3588,6 +3792,7 @@ var Equipo = (function () {
     alClic: alClic,
     /** Al entrar a una sala: la lista de ahora y la producción del equipo. */
     entrarSala: function () {
+      vaciar('sala');
       CTX.sala = nuevo('equipoLista');
       UI.id('salaPestanas').removeAttribute('data-listo');
       SALA.prod = null; SALA.prodError = '';
@@ -3600,6 +3805,7 @@ var Equipo = (function () {
     },
     salirSala: function () {
       apagarRefrescos();
+      vaciar('sala');   // lo tildado y sin mandar sale ahora: irse no lo pierde
       CTX.sala = nuevo('equipoLista');
       UI.mostrar(UI.id('salaPestanas'), false);
       UI.mostrar(UI.id('bloqueEquipo'), false);
@@ -3612,6 +3818,7 @@ var Equipo = (function () {
      * quien no tiene, los refrescos ya se le apagaron.
      */
     alVolver: function () { if (SALA.timer) refrescar(); },
+    sinGuardar: sinGuardar,
     elegirPestana: function (p) {
       SALA.pestana = p === 'produccion' ? 'produccion' : 'equipo';
       aplicarPestana();
@@ -4000,7 +4207,13 @@ var App = (function () {
     /* Ver `Sala.alVolverAlFrente`: el navegador frena las pestañas de fondo y el
        reloj se queda clavado hasta que alguien lo despierta. */
     document.addEventListener('visibilitychange', function () {
-      if (!document.hidden) { Sala.alVolverAlFrente(); Equipo.alVolver(); }
+      if (!document.hidden) { Sala.alVolverAlFrente(); Equipo.alVolver(); Pozo.alVolver(); Dashboard.alVolver(); }
+    });
+    // Tildes de asistencia guardándose: cerrar la pestaña ahora los perdería. El navegador pregunta.
+    window.addEventListener('beforeunload', function (ev) {
+      if (!Equipo.sinGuardar()) return;
+      ev.preventDefault();
+      ev.returnValue = '';
     });
     Pantalla.ajustarDisponibilidad();
 
