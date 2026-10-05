@@ -1018,6 +1018,9 @@ var Pozo = (function () {
     var plan = it.planTxt !== undefined ? it.planTxt : it.plan;
     return '<div class="pozo-tarjeta">' +
       '<div class="pt-cab">' + chip(it.tipo) +
+        // Otro estudiante del mismo cliente (oct 2026): se canta aparte, y acá se nota por qué
+        // el mismo cliente aparece dos veces.
+        (it.adicional ? '<span class="chip">Otro estudiante</span>' : '') +
         (plan ? '<span class="pt-plan">' + UI.esc(plan) + '</span>' : '') +
         '<span class="pt-der">' + (derecha || '') + '</span>' +
       '</div>' +
@@ -1048,15 +1051,19 @@ var Pozo = (function () {
     });
   }
 
+  /* 🔴 Lleva el ID de la matrícula: un mismo lead puede tener varias (otro estudiante), y
+     con solo el teléfono el servidor cargaba siempre la misma. */
   function botonCargar(it) {
     return '<button class="btn btn-verde btn-bloque pt-cargar" data-toque="' + UI.esc(it.telefono) + '"' +
-      ' data-tipo="' + UI.esc(it.tipo) + '"><span class="material-symbols-rounded">add_circle</span> Cargar al pozo</button>';
+      ' data-tipo="' + UI.esc(it.tipo) + '" data-mat="' + UI.esc(it.matId || '') + '">' +
+      '<span class="material-symbols-rounded">add_circle</span> Cargar al pozo</button>';
   }
 
   function conectarToques(c) {
     Array.prototype.forEach.call(c.querySelectorAll('[data-toque]'), function (b) {
       b.onclick = function () {
-        cargar({ tipo: b.getAttribute('data-tipo'), telefono: b.getAttribute('data-toque') }, b);
+        cargar({ tipo: b.getAttribute('data-tipo'), telefono: b.getAttribute('data-toque'),
+                 matId: b.getAttribute('data-mat') || '' }, b);
       };
     });
   }
@@ -1111,7 +1118,8 @@ var Pozo = (function () {
       accion: 'pozoCargar', token: Sesion.token,
       tipo: datos.tipo, telefono: datos.telefono,
       alumno: datos.alumno || '', alumno2: datos.alumno2 || '', titular: datos.titular || '',
-      ciudad: datos.ciudad || '', plan: datos.plan || '', usuarios: datos.usuarios || ''
+      ciudad: datos.ciudad || '', plan: datos.plan || '', usuarios: datos.usuarios || '',
+      matId: datos.matId || ''
     }).then(function (r) {
       if (!r || !r.ok) { UI.toast((r && r.message) || 'No se pudo cargar.', 'error', 7000); return false; }
       UI.toast('Cargada. Se canta cuando el anfitrión pida producción.', 'ok');
@@ -3722,6 +3730,7 @@ var Equipo = (function () {
         '<div class="pt-cab">' + UI.avatar(it.foto, it.asesor, 'avatar-mini') +
           '<span class="eq-nom">' + UI.esc(it.asesor) + '</span>' +
           '<span class="chip ' + (abono ? 'chip-ambar' : 'chip-verde') + '">' + (abono ? 'Abono' : 'Matrícula') + '</span>' +
+          (it.adicional ? '<span class="chip">Otro estudiante</span>' : '') +
         '</div>' +
         (function () {
           var usuarios = [it.alumno, it.alumno2].filter(function (x) { return !!x; });
