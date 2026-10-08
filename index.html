@@ -8,9 +8,9 @@
 
 <!--
   🔴 EL TEMA SE APLICA ANTES DEL PRIMER PINTADO, y por eso este script va acá
-  arriba y no en app.js?v=af52a4c7.
+  arriba y no en app.js?v=7199a04b.
 
-  `app.js?v=af52a4c7` se carga con `defer`: corre recién después de parsear el documento, así
+  `app.js?v=7199a04b` se carga con `defer`: corre recién después de parsear el documento, así
   que poner el tema ahí deja un PARPADEO oscuro en cada carga — la página se dibuja
   con el default y un instante después cambia entera. Se ve barato y, proyectado en
   la reunión, se ve roto.
@@ -30,6 +30,18 @@
         document.documentElement.setAttribute('data-theme', 'dark');
       }
     } catch (e) { /* sin almacenamiento: queda el claro, que es el default */ }
+    /*
+     * Con sesión guardada, el formulario de contraseña NO se muestra mientras el
+     * servidor la confirma (oct 2026): se ve «Entrando…». Va acá y no en app.js?v=7199a04b porque
+     * app.js?v=7199a04b espera a que baje la librería del confeti, y en una conexión lenta el
+     * formulario quedaba a la vista segundos — la persona escribía la contraseña
+     * creyendo que el portal no la recordaba. app.js?v=7199a04b saca la marca al decidir.
+     */
+    try {
+      if (localStorage.getItem('portal_token') || sessionStorage.getItem('portal_token')) {
+        document.documentElement.setAttribute('data-arranque', 'sesion');
+      }
+    } catch (e) { /* sin almacenamiento no hay sesión guardada: se ve el formulario */ }
   })();
 </script>
 
@@ -43,7 +55,7 @@
   adentro: 5.347.060 bytes medidos en ago 2026. Con la lista baja a entre 11 KB
   y 54 KB según el subconjunto que negocie el navegador — en producción se
   midieron 11.228 bytes. O sea que esto era el ~98 % del peso de la página: TODO
-  el resto junto (app.js?v=af52a4c7, styles.css?v=6ce4c339, las dos fuentes de texto y el confeti) son
+  el resto junto (app.js?v=7199a04b, styles.css?v=d84d60a5, las dos fuentes de texto y el confeti) son
   unos 210 KB.
 
   Y no se ve como "la página pesa": se ve como que los BOTONES TARDAN. Los
@@ -57,7 +69,7 @@
   instante, pero solo si alguien mira esa pantalla: hay un check que los recorre
   todos en `verify-frontend.mjs`.
 
-  Los ejes (opsz, wght, FILL, GRAD) se dejan COMPLETOS a propósito: `styles.css?v=6ce4c339`
+  Los ejes (opsz, wght, FILL, GRAD) se dejan COMPLETOS a propósito: `styles.css?v=d84d60a5`
   usa FILL 0 y FILL 1, y recortarlos ganaría poco sobre 54 KB a cambio de romper
   el estilo de forma difícil de rastrear.
 
@@ -67,7 +79,7 @@
 -->
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=arrow_back,arrow_forward,campaign,cancel,add_circle,chat,check_circle,dark_mode,edit_note,emoji_events,error,event_busy,expand_less,expand_more,fact_check,fullscreen,fullscreen_exit,grid_view,groups,hourglass_top,how_to_reg,info,light_mode,location_on,lock_clock,login,logout,manage_accounts,network_check,open_in_new,refresh,running_with_errors,save,savings,schedule,search,settings,shield_person,star,sync,verified,videocam,visibility,visibility_off,volume_up&display=block" rel="stylesheet">
 
-<link rel="stylesheet" href="styles.css?v=6ce4c339">
+<link rel="stylesheet" href="styles.css?v=d84d60a5">
 
 <!--
   El único CDN es opcional por diseño y el portal arranca igual sin él: si
@@ -80,7 +92,7 @@
   blanco sin ningún error en la consola.
 -->
 <script defer src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
-<script defer src="app.js?v=af52a4c7"></script>
+<script defer src="app.js?v=7199a04b"></script>
 </head>
 <body>
 
@@ -101,6 +113,15 @@
       <span class="material-symbols-rounded">error</span>
       <span id="loginAvisoTxt"></span>
     </div>
+
+    <!-- Con sesión guardada: esto en vez del formulario, hasta que el servidor conteste. -->
+    <div id="loginEntrando" class="login-entrando oculto" role="status">
+      <span class="material-symbols-rounded girando">sync</span>
+      <span id="loginEntrandoTxt">Entrando con su sesión guardada…</span>
+    </div>
+    <button type="button" class="btn btn-primario btn-bloque oculto" id="loginReintentar">
+      <span class="material-symbols-rounded">refresh</span> Reintentar con la sesión guardada
+    </button>
 
     <form class="login-form" id="loginForm" autocomplete="on">
       <div class="campo">
@@ -255,7 +276,7 @@
 
         <!--
           🎬 EL ESCENARIO (sep 2026): la llamada, la tarjeta del destape, el historial
-          y los controles del anfitrión. Lo pinta `renderEscenario` en app.js?v=af52a4c7.
+          y los controles del anfitrión. Lo pinta `renderEscenario` en app.js?v=7199a04b.
 
           Reemplaza al overlay oscuro del destape: con la tarjeta que ahora se QUEDA
           minutos, un overlay tapaba todo lo demás. Es CLARO en los dos temas
@@ -286,7 +307,7 @@
           <!--
             🎉 MI PRODUCCIÓN (sep 2026, paso 3 del rediseño). El pozo dejó de ser un
             cuadro emergente: vive en la página, en el orden que pidió el dueño — lo
-            más rápido primero. Las LISTAS las repinta app.js?v=af52a4c7; los FORMULARIOS son
+            más rápido primero. Las LISTAS las repinta app.js?v=7199a04b; los FORMULARIOS son
             fijos, para que un repintado no le borre a nadie lo que está escribiendo.
 
             ⚠️ El teléfono es OBLIGATORIO en los tres caminos (decisión 09 del plan):
@@ -385,7 +406,7 @@
 
           <!--
             La asistencia del equipo, la de AHORA. La lista la pinta `Equipo` en
-            app.js?v=af52a4c7, el mismo código que la de la pestaña Asistencia.
+            app.js?v=7199a04b, el mismo código que la de la pestaña Asistencia.
           -->
           <div class="bloque bloque-equipo oculto" id="bloqueEquipo">
             <div id="equipoEntrar"></div>
@@ -469,7 +490,7 @@
          Sin pestaña en la barra: se llega solo poniendo #config en la dirección.
 
          🔴 No es un secreto, es que NO ES UNA PANTALLA DEL EQUIPO. La dirección del
-         backend ya viene puesta en app.js?v=af52a4c7, así que nadie del equipo necesita tocar
+         backend ya viene puesta en app.js?v=7199a04b, así que nadie del equipo necesita tocar
          nada acá; y un director no tiene por qué ver las tripas de cómo está
          programado el CRM. Cuando la empresa tenga directores que no programan,
          esta pantalla sería ruido que invita a romper algo.

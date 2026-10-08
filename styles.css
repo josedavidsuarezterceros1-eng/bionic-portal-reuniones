@@ -292,9 +292,16 @@ input::placeholder { color: var(--txt-mute); }
   padding: var(--sp-5);
 }
 
+/*
+ * 🔴 El fondo va por TOKEN (oct 2026). Estaba escrito a mano en azul oscuro, de cuando el
+ * portal era oscuro: con el tema claro, «Correo», «Contraseña» y la casilla «Mantener la
+ * sesión iniciada» quedaban texto oscuro sobre caja oscura — INVISIBLES. Quien no ve la
+ * casilla no la marca, y sin marcarla la sesión muere al cerrar la pestaña: una parte del
+ * «el portal no me recuerda». Lo encontró una captura; ningún check mira apariencia.
+ */
 .login-caja {
   width: min(420px, 100%);
-  background: rgba(15, 37, 64, 0.72);
+  background: var(--bg-elev);
   border: 1px solid var(--borde);
   border-radius: var(--r-xl);
   padding: var(--sp-6);
@@ -320,6 +327,17 @@ input::placeholder { color: var(--txt-mute); }
 
 .login-form { display: flex; flex-direction: column; gap: var(--sp-4); }
 .login-nota { font-size: 12px; color: var(--txt-mute); text-align: center; margin-top: var(--sp-2); }
+/* «Entrando…» con la sesión guardada: reemplaza al formulario mientras el servidor contesta,
+   para que nadie se ponga a escribir la contraseña que no hace falta (oct 2026). */
+.login-entrando {
+  display: flex; align-items: center; justify-content: center; gap: var(--sp-2);
+  padding: var(--sp-5) 0; color: var(--txt-dim); font-size: 14.5px; text-align: center;
+}
+.login-entrando .material-symbols-rounded { color: var(--azul); }
+#loginReintentar { margin-bottom: var(--sp-4); }
+html[data-arranque="sesion"] #loginForm,
+html[data-arranque="sesion"] .login-nota { display: none; }
+html[data-arranque="sesion"] #loginEntrando { display: flex !important; }
 
 .recordar {
   display: flex; align-items: center; gap: 10px;
@@ -1223,6 +1241,18 @@ button.eh-chip:hover { background: #FFFBEB; border-color: #FCD34D; }
   background: #FFFBEB;
   border: 1px solid #FDE68A;
 }
+
+/* «Pozo cargado · 08:12»: solo la hora, nunca cuántas (la barra se proyecta). Verde
+   cargado, gris si todavía no — que no es un error: el primer «Pedir» lo carga solo. */
+.pozo-estado {
+  display: flex; align-items: center; gap: 6px;
+  flex: 1 1 200px;
+  margin: 0;
+  font: 600 13.5px/1.3 var(--font-txt);
+  color: #64748B;
+}
+.pozo-estado .material-symbols-rounded { font-size: 18px; }
+.pozo-estado.cargado { color: #047857; }
 
 /* ── El lienzo del confeti: arriba de todo y sin tapar clics. */
 #confetiLienzo {

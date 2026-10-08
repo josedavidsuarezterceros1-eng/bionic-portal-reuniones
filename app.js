@@ -135,7 +135,12 @@ var API = (function () {
    * transporte —que pega sobre todo al arrancar, justo cuando el anfitrión abre la
    * sala— le haría creer que no se abrió y toda la filial esperaría de más.
    */
-  var POST_REPETIBLE = { login: true, pingAsistencia: true, abrirSala: true };
+  /*
+   * `cargarPozo` (oct 2026) también: rearma la foto del pozo desde la hoja, así que
+   * mandarla dos veces deja la MISMA foto. Sin reintento, un 404 del transporte justo
+   * antes del festejo dejaría al anfitrión con «No se pudo» y el pozo sin cargar.
+   */
+  var POST_REPETIBLE = { login: true, pingAsistencia: true, abrirSala: true, cargarPozo: true };
 
   function post(data) {
     var url = Cfg.url();
@@ -211,17 +216,29 @@ var API = (function () {
       try {
         r = JSON.parse(txt);
       } catch (e) {
-        // El síntoma clásico de haber publicado con el acceso equivocado: en vez
-        // de JSON llega el HTML del inicio de sesión de Google. Sin este mensaje,
-        // el error que se ve es un críptico "Unexpected token <".
+        /*
+         * En vez de JSON llegó una PÁGINA. Dos causas con el mismo síntoma: la app
+         * web publicada con el acceso equivocado (el HTML del login de Google,
+         * siempre), o Apps Script desbordado —demasiadas ejecuciones a la vez, que es
+         * justo lo que pasa a las 8:00 con toda la filial entrando— que responde su
+         * página de error con un 200 (a veces).
+         *
+         * 🔴 Se marca PASAJERO (oct 2026). Antes no lo era, y en el arranque eso
+         * mandaba a la persona a escribir la contraseña con un cartel que acusaba al
+         * despliegue: un desborde de un minuto se leía como «no me recuerda». Las
+         * lecturas se reintentan solas; si la causa es el despliegue, el mensaje
+         * aparece igual, un segundo más tarde.
+         */
         if (/<!DOCTYPE|<html/i.test(txt)) {
-          throw new Error('El backend respondió una página web en vez de datos. Suele ser que la app web se publicó con acceso restringido: tiene que estar en "Cualquier persona".');
+          throw transitorio_(new Error('Google respondió una página en vez de datos. Si pasa a veces, es una falla pasajera de Google: vuelva a intentar. Si pasa siempre, la app web quedó publicada con acceso restringido (tiene que estar en "Cualquier persona").'));
         }
         throw new Error('El backend respondió algo que no se pudo leer.');
       }
       // Sesión vencida: se distingue de un error cualquiera para no mostrar un
       // cartel rojo inútil cuando lo que hay que hacer es volver a entrar.
       if (r && r.error === 'auth') { Sesion.caida(); throw new Error(r.message || 'Sesión vencida.'); }
+      // La sesión recordada se renueva sola (ver `tokenRenovable_` en el backend).
+      if (r && r.tokenNuevo) Sesion.renovar(r.tokenNuevo);
       Reloj.sincronizar(r);
       return r;
     });
@@ -326,6 +343,16 @@ var Sesion = (function () {
     try { return almacen.getItem(LLAVE); } catch (e) { return null; }
   }
 
+  /** De quién es un token (lo que dice su primera mitad), o '' si no se entiende.
+   *  Solo para comparar: quien decide si vale es el servidor, con la firma. */
+  function emailDe(token) {
+    try {
+      var b64 = String(token).split('.')[0].replace(/-/g, '+').replace(/_/g, '/');
+      while (b64.length % 4) b64 += '=';
+      return String(JSON.parse(atob(b64)).e || '');
+    } catch (e) { return ''; }
+  }
+
   return {
     token: null,
     usuario: null,
@@ -350,6 +377,22 @@ var Sesion = (function () {
       this.token = null; this.usuario = null;
       try { sessionStorage.removeItem(LLAVE); } catch (e) {}
       try { localStorage.removeItem(LLAVE); } catch (e) {}
+    },
+    /*
+     * El servidor mandó la sesión recordada RENOVADA (oct 2026): se guarda en lugar de
+     * la vieja, en el MISMO lugar donde estaba.
+     *
+     * ⚠️ Solo si es de la misma persona. Una respuesta pedida con el token anterior
+     * puede llegar DESPUÉS de que alguien cerró sesión y entró otro en esta pestaña:
+     * guardarla a ciegas le devolvería al segundo la sesión del primero.
+     */
+    renovar: function (nuevo) {
+      if (!this.token || !nuevo || emailDe(nuevo) !== emailDe(this.token)) return;
+      this.token = nuevo;
+      try {
+        if (leer(localStorage)) localStorage.setItem(LLAVE, nuevo);
+        else if (leer(sessionStorage)) sessionStorage.setItem(LLAVE, nuevo);
+      } catch (e) {}
     },
     /** La sesión venció mientras se usaba el portal. */
     caida: function () {
@@ -1232,7 +1275,13 @@ var Sala = (function () {
        orden), o null = la de ahora. Es local: no toca el pozo ni a nadie más. */
     verOrdinal: null,
     rondaVista: null,    // rondaId de la última ronda vista: al cambiar, se olvida `verOrdinal`
-    ultimoGolpe: null    // rondaId:golpe ya sonado, para que cada golpe suene UNA vez
+    ultimoGolpe: null,   // rondaId:golpe ya sonado, para que cada golpe suene UNA vez
+    pidiendo: false,     // «Pedir producción» o «Cargar pozo» viajando (ver `pedirProduccion`)
+    cargandoPozo: false, // …y cuál de los dos, para el botón
+    ignorarRonda: null,  // {id, hasta}: la ronda de ANTES de apretar, que ya no puede volver
+    rtt: 0,              // cuánto tarda una consulta de ida y vuelta (promedio): ver `tick`
+    destapeEnVuelo: 0,    // preguntas adelantadas del destape en vuelo (ver `tick`)
+    destapeUltimo: 0
   };
 
   /* ── ciclo de vida ─────────────────────────────────────────────────── */
@@ -1257,6 +1306,11 @@ var Sala = (function () {
     S.verOrdinal = null;
     S.rondaVista = null;
     S.ultimoGolpe = null;
+    S.pidiendo = false;
+    S.cargandoPozo = false;
+    S.ignorarRonda = null;
+    S.destapeEnVuelo = 0;
+    S.destapeUltimo = 0;
     S.verif = null;
     // "Ya se decidió algo sobre esta sala en esta visita". Ver `autoTomarSala`.
     S.autoTomaResuelta = false;
@@ -1325,11 +1379,14 @@ var Sala = (function () {
   function poll() {
     if (!S.sala || enVuelo) return;
     enVuelo = true;
+    var t0 = Date.now();
     API.get({ accion: 'estadoSala', token: Sesion.token, salaId: S.sala.id })
       .then(function (r) {
         if (!S.sala) return;
         if (!r || !r.ok) { avisarCaida((r && r.message) || 'No se pudo leer la sala.'); return; }
+        medirViaje(Date.now() - t0);
         avisarRecuperada();
+        if (respuestaVieja(r)) return;
         aplicar(r);
       })
       .catch(function (e) { if (S.sala) avisarCaida(e.message || 'Error de conexión.'); })
@@ -1339,6 +1396,64 @@ var Sala = (function () {
         clearTimeout(S.timerPoll);                     // por si quedó alguno vivo
         S.timerPoll = setTimeout(poll, cadencia());
       });
+  }
+
+  /** Promedio de cuánto tarda una consulta: de ahí sale cuándo adelantar el pedido del destape. */
+  function medirViaje(ms) {
+    if (!(ms > 0) || ms > 30000) return;
+    S.rtt = S.rtt ? Math.round(S.rtt * 0.7 + ms * 0.3) : ms;
+  }
+
+  /*
+   * ══════════════════════════════════════════════════════════════════════════
+   * 🔴 UNA RESPUESTA QUE LLEGA TARDE NO PUEDE HACER RETROCEDER LA CEREMONIA (oct 2026).
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * Desde que la pantalla del anfitrión pinta la llamada en el acto (ver
+   * `pedirProduccion`) y adelanta el pedido del destape (ver `tick`), hay más de una
+   * consulta viajando a la vez, y Apps Script no garantiza que vuelvan en orden. Una
+   * que salió ANTES del clic y vuelve después diría «no hay ronda», y la pantalla
+   * proyectada saltaría de la llamada al reposo y de vuelta a la llamada — el «se
+   * mezcla todo» que reportó el dueño.
+   *
+   * Dos reglas, las dos sobre lo que el servidor ya dijo:
+   *   · la ronda que se veía al APRETAR no vuelve (por un rato: a las 13:00 el
+   *     servidor sí puede volver legítimamente a «sin ronda»);
+   *   · dentro de una MISMA ronda la fase no va para atrás (llamada → destape → fin).
+   */
+  function rangoFase(f) { return f === 'llamada' ? 1 : (f === 'reveal' || f === 'fin') ? 2 : 0; }
+
+  function respuestaVieja(r) {
+    var nueva = (r && r.ronda) || {};
+    var ign = S.ignorarRonda;
+    if (ign) {
+      if (Date.now() > ign.hasta) S.ignorarRonda = null;
+      else if ((nueva.rondaId || '') === ign.id) return true;
+    }
+    var actual = (S.estado && S.estado.ronda) || {};
+    if (nueva.rondaId && nueva.rondaId === actual.rondaId) {
+      if (rangoFase(nueva.fase) < rangoFase(actual.fase)) return true;
+      if ((nueva.revelados || 0) < (actual.revelados || 0)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Una consulta POR FUERA de la cadena del sondeo, para el destape del anfitrión.
+   * La cadena puede tener una consulta en vuelo justo en el «¡a las tres!», y esperar
+   * a que vuelva y a la siguiente dejaba la pantalla proyectada colgada 2-5 s.
+   */
+  function consultarAparte() {
+    if (!S.sala) return Promise.resolve();
+    var salaId = S.sala.id, t0 = Date.now();
+    return API.get({ accion: 'estadoSala', token: Sesion.token, salaId: salaId })
+      .then(function (r) {
+        if (!S.sala || S.sala.id !== salaId || !r || !r.ok) return;
+        medirViaje(Date.now() - t0);
+        if (respuestaVieja(r)) return;
+        aplicar(r);
+      })
+      .catch(function () { /* la cadena del sondeo sigue: esto era solo para llegar antes */ });
   }
 
   /**
@@ -1528,15 +1643,21 @@ var Sala = (function () {
        * adentro son decenas por minuto contra las 30 ejecuciones simultáneas que
        * Apps Script le da a todo el proyecto.
        *
-       * La transición es justo el momento en que el dato importa: al terminar la
-       * vuelta, lo que se cantó tiene que salir de "esperando turno" en la pantalla
-       * de su dueño, aunque el destape lo haya disparado otro.
+       * 🔴 Solo al TERMINAR el festejo, y escalonado (oct 2026). Se releía también al
+       * EMPEZAR la llamada: toda la sala pedía su pozo en el mismo segundo en que el
+       * anfitrión necesita que el servidor le conteste rápido, y no había nada nuevo
+       * que mostrar — durante la llamada lo cantado sigue figurando «En el pozo»
+       * (`pozoEnLlamada_`). Al terminar es cuando el dato cambia: lo que se cantó
+       * tiene que salir de "esperando turno" en la pantalla de su dueño. El sorteo de
+       * hasta 4 s reparte los pedidos de la sala en vez de juntarlos.
        *
        * ⚠️ Límite conocido: si la misma persona carga desde el celular, la
        * computadora se entera recién en la ronda siguiente. Es cosmético —el
        * contador— y cargar dos veces lo rechaza el servidor con un mensaje claro.
        */
-      Pozo.refrescar();
+      if (!hayShow(r)) {
+        setTimeout(function () { if (S.sala) Pozo.refrescar(); }, Math.floor(Math.random() * 4000));
+      }
     }
 
     var ronda = r.ronda || {};
@@ -1619,6 +1740,8 @@ var Sala = (function () {
   }
 
   function golpeDe(ronda) {
+    // La llamada LOCAL (el clic todavía viaja): «Preparando…» hasta que el servidor diga cuándo termina.
+    if (ronda.provisional) return GOLPES[0];
     var total = ronda.llamadaMs || 6500;
     var falta = Math.max(0, (ronda.finTs || 0) - Reloj.ahora());
     var frac = Math.min(1, Math.max(0, 1 - falta / total));
@@ -1666,6 +1789,36 @@ var Sala = (function () {
     if (ronda.fase !== 'llamada') return;
 
     pintarLlamada(ronda);
+    if (ronda.provisional) return;   // todavía no se sabe cuándo termina
+
+    /*
+     * ══════════════════════════════════════════════════════════════════════
+     * 🔴 EL DESTAPE, EN LA PANTALLA QUE SE PROYECTA, SALE A TIEMPO (oct 2026).
+     * ══════════════════════════════════════════════════════════════════════
+     *
+     * Para enterarse del destape hay que preguntarle al servidor, y con Apps Script
+     * la pregunta tarda 1-3 s: preguntando recién en el cero, «¡a las tres!» quedaba
+     * colgado ese tiempo —y más si el sondeo tenía otra consulta en vuelo— con el
+     * redoble sonando. En el anfitrión se pregunta ANTES, por fuera de la cadena del
+     * sondeo: casi la mitad de un viaje antes del cero, que es lo que tarda en llegar
+     * la pregunta. Si llega temprano, el servidor contesta «sigue la llamada»: por eso
+     * se vuelve a preguntar cada 0,6 s SIN esperar la respuesta anterior (con a lo
+     * sumo dos en vuelo), o una pregunta temprana haría llegar tarde a la siguiente.
+     *
+     * ⚠️ Solo en el anfitrión. Los demás no ven la ceremonia (la miran por Meet) y
+     * multiplicar las preguntas de toda la sala en el segundo del destape es lo que
+     * no hay que hacer.
+     */
+    if (S.estado.soyAnfitrion) {
+      var adelanto = Math.min(1500, Math.max(250, Math.round((S.rtt || 1500) * 0.45)));
+      if (Reloj.ahora() >= ronda.finTs - adelanto && S.destapeEnVuelo < 2 &&
+          Date.now() - S.destapeUltimo >= 600) {
+        S.destapeEnVuelo++;
+        S.destapeUltimo = Date.now();
+        consultarAparte().then(function () { S.destapeEnVuelo = Math.max(0, S.destapeEnVuelo - 1); });
+      }
+      return;
+    }
 
     /*
      * Terminó la llamada: el servidor ya puede destapar. Se pregunta enseguida en
@@ -2094,9 +2247,19 @@ var Sala = (function () {
        * 🔴 Se ve EXACTAMENTE IGUAL haya producción o no, y NUNCA dice el tipo: si
        * con el pozo vacío se viera distinta, la sala sabría que no queda nada.
        */
-      pintarSi(cuerpo, 'llamada|' + ronda.rondaId,
+      /*
+       * ⚠️ La firma lleva el NÚMERO, no el `rondaId`: la llamada local que se pinta al
+       * apretar (con el número que ya decía el botón) y la del servidor son la misma
+       * llamada, y repintar entre una y otra cortaría la animación de «Preparando…» en
+       * la pantalla proyectada. Dos llamadas seguidas siempre tienen un destape o un
+       * cierre en el medio, así que la firma igual cambia entre una y otra.
+       * Sin número conocido (0) no se inventa «la primera»: va en blanco hasta que
+       * llegue, y en blanco CON su alto (un espacio duro) — sin él la caja quedaba más
+       * baja y al llegar el número todo lo de abajo saltaba, en la pantalla proyectada.
+       */
+      pintarSi(cuerpo, 'llamada|' + (ronda.ordinal || 0),
         '<div class="llamada" id="llamada" data-golpe="">' +
-          '<p class="llamada-orden" id="llamadaOrden">' + UI.esc(ordinalTxt(ronda.ordinal)) + '</p>' +
+          '<p class="llamada-orden" id="llamadaOrden">' + (ronda.ordinal ? UI.esc(ordinalTxt(ronda.ordinal)) : '&nbsp;') + '</p>' +
           '<div class="llamada-num" id="llamadaNum" aria-hidden="true"></div>' +
           '<p class="llamada-golpe" id="llamadaGolpe" aria-live="assertive">Preparando…</p>' +
           // Tres marcas que se prenden con cada golpe: se lee desde el fondo de la sala.
@@ -2149,10 +2312,11 @@ var Sala = (function () {
     UI.mostrar(dock, conduce);
     if (conduce) {
       var enLlamada = fase === 'llamada';
-      if (pintarSi(dock, 'dock|' + enLlamada + '|' + (ronda.siguiente || 0), dockHtml(enLlamada, ronda.siguiente))) {
-        // Se le pasa el BOTÓN, no el evento: pedirProduccion lo deshabilita y le
-        // cambia el texto mientras la petición viaja.
-        UI.id('btnPedir').onclick = function () { pedirProduccion(this); };
+      var dk = { enLlamada: enLlamada, preparando: !!ronda.provisional, siguiente: ronda.siguiente || 0,
+                 pozoCargado: ronda.pozoCargado || '', cargando: !!S.cargandoPozo };
+      if (pintarSi(dock, 'dock|' + JSON.stringify(dk), dockHtml(dk))) {
+        UI.id('btnPedir').onclick = function () { pedirProduccion(); };
+        UI.id('btnCargarPozo').onclick = cargarPozo;
         UI.id('btnRepetirSirena').onclick = repetirSirena;
       }
     }
@@ -2248,15 +2412,33 @@ var Sala = (function () {
    * no puede saber si el audio se está compartiendo, así que no puede mostrarlo
    * como un estado confirmado.
    */
-  function dockHtml(enLlamada, siguiente) {
-    return '<button type="button" class="btn-pedir" id="btnPedir"' + (enLlamada ? ' disabled' : '') + '>' +
-        '<span class="material-symbols-rounded">campaign</span>' +
-        '<span class="bp-txt"><strong>' + (enLlamada ? 'Llamada en curso…' : 'Pedir producción') + '</strong>' +
-          (!enLlamada && siguiente ? '<small>(' + UI.esc(ordinalMin(siguiente)) + ')</small>' : '') +
+  /*
+   * 🔴 «CARGAR POZO» (oct 2026, propuesta del dueño): arma ANTES de empezar la foto
+   * de lo que se va a cantar, y «Pedir producción» saca de ahí sin releer la hoja con
+   * la filial mirando. El estado dice SOLO la hora, nunca cuántas: la barra se
+   * proyecta (decisión 07). Sin cargar también funciona — el primer «Pedir» la arma.
+   */
+  function dockHtml(dk) {
+    var pedirIcono = dk.preparando ? '<span class="material-symbols-rounded girando">sync</span>'
+                                   : '<span class="material-symbols-rounded">campaign</span>';
+    var pedirTxt = dk.preparando ? 'Preparando…' : (dk.enLlamada ? 'Llamada en curso…' : 'Pedir producción');
+    return '<button type="button" class="btn-pedir" id="btnPedir"' + (dk.enLlamada ? ' disabled' : '') + '>' +
+        pedirIcono +
+        '<span class="bp-txt"><strong>' + pedirTxt + '</strong>' +
+          (!dk.enLlamada && dk.siguiente ? '<small>(' + UI.esc(ordinalMin(dk.siguiente)) + ')</small>' : '') +
         '</span>' +
+      '</button>' +
+      '<button type="button" class="btn" id="btnCargarPozo"' + (dk.enLlamada || dk.cargando ? ' disabled' : '') + '>' +
+        (dk.cargando ? '<span class="material-symbols-rounded girando">sync</span> Cargando…'
+                     : '<span class="material-symbols-rounded">savings</span> Cargar pozo') +
       '</button>' +
       '<button type="button" class="btn" id="btnRepetirSirena">' +
         '<span class="material-symbols-rounded">volume_up</span> Repetir sirena</button>' +
+      '<p class="pozo-estado' + (dk.pozoCargado ? ' cargado' : '') + '" id="pozoEstado">' +
+        (dk.pozoCargado
+          ? '<span class="material-symbols-rounded">check_circle</span> Pozo cargado · ' + UI.esc(dk.pozoCargado)
+          : '<span class="material-symbols-rounded">info</span> Pozo sin cargar en esta reunión') +
+      '</p>' +
       '<p class="aviso-audio" id="avisoAudio">' +
         '<span class="material-symbols-rounded">volume_up</span>' +
         '<span>¿Compartió la pestaña con audio? En Meet, comparta <strong>esta pestaña</strong> ' +
@@ -2519,44 +2701,103 @@ var Sala = (function () {
    * silencio: el segundo clic no hacía nada y tampoco se veía que el primero seguía
    * en camino.
    */
-  function pedirProduccion(boton) {
+  /*
+   * ══════════════════════════════════════════════════════════════════════════
+   * 🔴 LA LLAMADA ARRANCA EN EL ACTO EN LA PANTALLA QUE SE PROYECTA (oct 2026).
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * El dueño lo reportó así: «a veces ni hace la cuenta y todo el show… tarda mucho y
+   * parece que mientras carga y da el show todo se mezcla». Medido en el preview con
+   * la demora de Apps Script: al apretar, la pantalla esperaba la respuesta Y DESPUÉS
+   * un sondeo entero (que podía estar en vuelo con el estado de antes del clic) para
+   * enterarse de la llamada. Con 2 s por pedido se perdía «Preparando…»; con 3,5,
+   * también «¡a la una!»; con Apps Script cargado, la llamada entera — y la pantalla
+   * pasaba directo a la tarjeta, sin cuenta.
+   *
+   * Ahora, en el mismo clic:
+   *   1. se pinta la llamada LOCAL —«LA SEGUNDA · Preparando…», con el número que ya
+   *      decía el botón—, que no dice nada de lo que viene (es igual con el pozo
+   *      vacío), y el botón dice «Preparando…»;
+   *   2. la respuesta del servidor YA trae la llamada con su `finTs`: se pinta sin
+   *      esperar a ningún sondeo, y los golpes siguen desde ahí;
+   *   3. una respuesta vieja que llegue después no la puede deshacer (`respuestaVieja`).
+   *
+   * 🔴 `iniciarRonda` ESCRIBE y no se reintenta sola (POST_REPETIBLE): si falla, la
+   * pantalla VUELVE a lo que tenía y el botón queda listo para apretar de nuevo, con el
+   * motivo a la vista. Una llamada local colgada en «Preparando…» sería peor que nada.
+   */
+  function pedirProduccion() {
+    if (S.pidiendo || !S.estado || !S.sala) return;
+    var antes = S.estado;
+    var rAntes = antes.ronda || {};
+    S.pidiendo = true;
     S.ultimoDestape = null;
-    var etiqueta = boton ? boton.innerHTML : '';
-    var salioBien = false;
+    S.destapeEnVuelo = 0;
+    S.destapeUltimo = 0;
+    S.ignorarRonda = { id: rAntes.rondaId || '', hasta: Date.now() + 25000 };
 
-    if (boton) {
-      boton.disabled = true;
-      /*
-       * Dice lo que VA A PASAR, no lo que el programa está haciendo por dentro.
-       * Antes decía "Sincronizando sala…", que es vocabulario nuestro y no le
-       * anticipa al anfitrión que lo próximo es la llamada. Entre su clic y la
-       * respuesta de Apps Script pasan unos segundos, y el botón es lo único que
-       * mira mientras tanto.
-       */
-      boton.innerHTML = '<span class="material-symbols-rounded girando">sync</span> Preparando…';
-    }
-
-    var restaurar = function () {
-      if (!boton || !boton.isConnected) return;
-      boton.disabled = false;
-      boton.innerHTML = etiqueta;
+    var local = copiaEstado(antes);
+    local.ronda = {
+      rondaId: 'local', fase: 'llamada', provisional: true, finTs: 0,
+      llamadaMs: rAntes.llamadaMs || 0, ordinal: rAntes.siguiente || 0,
+      itemActual: null, revelados: 0, enShow: true, destapeTs: 0,
+      siguiente: rAntes.siguiente || 0, pozoCargado: rAntes.pozoCargado || '',
+      historial: rAntes.historial || []
     };
+    aplicar(local);
 
-    /*
-     * Si salió bien NO se restaura: la ronda arranca y el repintado reemplaza este
-     * botón por la llamada. Restaurarlo acá haría parpadear "Pedir producción"
-     * entre medio, que es justo la duda que veníamos a sacar.
-     *
-     * ⚠️ Pero el repintado solo ocurre si el estado CAMBIA (`pintarSi` compara una
-     * firma). Un "ok" del servidor sin ronda a la vista dejaría el botón trabado
-     * para siempre, y sin manera de pedir producción en toda la reunión. Por eso el
-     * plazo: si a los 10 s el botón sigue diciendo "Preparando", vuelve solo.
-     */
-    accion({ accion: 'iniciarRonda', token: Sesion.token, salaId: S.sala.id },
-      function () { salioBien = true; })
+    var salaId = S.sala.id;
+    API.post({ accion: 'iniciarRonda', token: Sesion.token, salaId: salaId })
+      .then(function (r) {
+        if (!S.sala || S.sala.id !== salaId) return;
+        if (!r || !r.ok) throw new Error((r && r.message) || 'No se pudo pedir producción.');
+        var est = copiaEstado(S.estado);
+        est.ronda = r.ronda;
+        if (!respuestaVieja(est)) aplicar(est);
+      })
+      .catch(function (e) {
+        if (!S.sala || S.sala.id !== salaId) return;
+        S.ignorarRonda = null;
+        if (S.estado && S.estado.ronda && S.estado.ronda.provisional) aplicar(antes);
+        UI.toast((e && e.message) || 'Error de conexión.', 'error');
+      })
+      .then(function () { S.pidiendo = false; pollYa(); });
+  }
+
+  /** Copia superficial del estado de la sala: lo justo para cambiarle la ronda. */
+  function copiaEstado(est) {
+    var c = {};
+    Object.keys(est || {}).forEach(function (k) { c[k] = est[k]; });
+    return c;
+  }
+
+  /*
+   * «Cargar pozo»: la foto de lo que se va a cantar, ANTES de empezar (ver `dockHtml`).
+   * Es idempotente en el servidor, así que el transporte la puede reintentar sola.
+   */
+  function cargarPozo() {
+    if (S.pidiendo || !S.sala) return;
+    S.pidiendo = true;
+    S.cargandoPozo = true;
+    renderEscenario();
+    var salaId = S.sala.id;
+    API.post({ accion: 'cargarPozo', token: Sesion.token, salaId: salaId })
+      .then(function (r) {
+        if (!S.sala || S.sala.id !== salaId) return;
+        if (!r || !r.ok) throw new Error((r && r.message) || 'No se pudo cargar el pozo.');
+        UI.toast('Pozo cargado.', 'ok');
+        var est = copiaEstado(S.estado);
+        est.ronda = r.ronda;
+        if (!respuestaVieja(est)) aplicar(est);
+      })
+      .catch(function (e) {
+        if (!S.sala || S.sala.id !== salaId) return;
+        UI.toast((e && e.message) || 'Error de conexión.', 'error');
+      })
       .then(function () {
-        if (!salioBien) { restaurar(); return; }
-        setTimeout(restaurar, 10000);
+        S.pidiendo = false;
+        S.cargandoPozo = false;
+        if (S.sala) renderEscenario();
       });
   }
 
@@ -4069,13 +4310,39 @@ var App = (function () {
     irA('sala');
   }
 
-  function mostrarLogin(mensaje) {
+  /** La marca del <head> que esconde el formulario mientras se prueba la sesión guardada. */
+  function arranqueResuelto() {
+    try { document.documentElement.removeAttribute('data-arranque'); } catch (e) {}
+  }
+
+  /**
+   * @param {string}  mensaje
+   * @param {boolean} conReintento  la sesión guardada sigue ahí y no se pudo confirmar
+   *                                por la RED: se ofrece «Reintentar» además del formulario.
+   */
+  function mostrarLogin(mensaje, conReintento) {
+    arranqueResuelto();
     Sala.salir();
     Dashboard.desactivar();
     UI.mostrar(UI.id('app'), false);
     UI.mostrar(UI.id('login'), true);
+    UI.mostrar(UI.id('loginEntrando'), false);
+    UI.mostrar(UI.id('loginForm'), true);
+    UI.mostrar(UI.id('loginReintentar'), !!conReintento);
     if (mensaje) avisoLogin(mensaje);
     UI.mostrar(UI.id('loginSinApi'), !Cfg.url());
+  }
+
+  /** «Entrando…» en lugar del formulario: hay sesión guardada y el servidor todavía no contestó. */
+  function mostrarEntrando(texto) {
+    arranqueResuelto();
+    UI.mostrar(UI.id('app'), false);
+    UI.mostrar(UI.id('login'), true);
+    avisoLogin('');
+    UI.id('loginEntrandoTxt').textContent = texto || 'Entrando con su sesión guardada…';
+    UI.mostrar(UI.id('loginEntrando'), true);
+    UI.mostrar(UI.id('loginForm'), false);
+    UI.mostrar(UI.id('loginReintentar'), false);
   }
 
   function avisoLogin(msg) {
@@ -4084,6 +4351,7 @@ var App = (function () {
   }
 
   function entrarApp(usuario, salas) {
+    arranqueResuelto();
     // Antes de pintar nada: `irA('dashboard')` activa el Dashboard, y si las salas
     // llegan después ya disparó su propio pedido y el ahorro se pierde.
     Dashboard.precargar(salas);
@@ -4127,39 +4395,59 @@ var App = (function () {
     mostrarLogin('');
   }
 
-  /** Sesión guardada en la pestaña: se reanuda sin volver a pedir contraseña. */
-  function reanudar() {
+  /*
+   * ══════════════════════════════════════════════════════════════════════════
+   * 🔴 SESIÓN GUARDADA: se reanuda sin pedir contraseña, y SE INSISTE (oct 2026).
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * El dueño lo reportó así: «por más que tenga recordar mi inicio de sesión, a veces
+   * no recuerda, o tarda demasiado, o tengo que poner correo y contraseña». Eran tres
+   * caminos que terminaban en el formulario con la sesión todavía VIVA:
+   *
+   *   · el servidor contestaba un error que no era de sesión (Apps Script desbordado
+   *     a las 8:00, una hoja que tardó) y `{ok:false}` mandaba al formulario SIN
+   *     MENSAJE — exactamente igual que una sesión vencida;
+   *   · Google contestaba una página en vez de datos, y el cartel decía «ingrese de
+   *     nuevo»;
+   *   · y mientras tanto el formulario estaba a la vista desde el primer instante, así
+   *     que la persona se ponía a escribir antes de que el servidor contestara.
+   *
+   * Ahora: con sesión guardada se ve «Entrando…»; un fallo que NO es de sesión se
+   * reintenta solo, dos veces más con pausa; y si igual no se pudo, el formulario
+   * aparece con «Reintentar» y diciendo que la sesión sigue guardada.
+   *
+   * 🔴 Solo `error:'auth'` es una sesión vencida, y ahí `Sesion.caida()` ya borró el
+   * token y mostró su propio mensaje: pisarlo sería mentirle a la persona.
+   */
+  var REANUDAR_ESPERAS_MS = [2000, 5000];
+
+  function reanudar(intento) {
+    intento = intento || 0;
     if (!Sesion.recuperar() || !Cfg.url()) { mostrarLogin(''); return; }
+    // Con #config a la vista no se la tapa: es la puerta para arreglar la dirección del backend.
+    if (location.hash !== '#config') {
+      mostrarEntrando(intento ? 'Reconectando con el servidor… (intento ' + (intento + 1) + ' de ' +
+                                (REANUDAR_ESPERAS_MS.length + 1) + ')' : '');
+    }
     API.get({ accion: 'yo', token: Sesion.token })
       .then(function (r) {
-        if (r && r.ok) entrarApp(r.usuario, r.salas);
-        else mostrarLogin('');
+        if (r && r.ok) { entrarApp(r.usuario, r.salas); return; }
+        throw new Error((r && r.message) || 'El servidor no pudo confirmar la sesión.');
       })
-      /*
-       * 🔴 Un fallo de RED acá NO es una sesión vencida, y decirlo importa.
-       *
-       * Esto es la PRIMERA llamada después de cargar la página — justo donde más
-       * pega el 404 del transporte de Apps Script (ver el comentario largo en API).
-       * Mientras el catch mandaba a `mostrarLogin('')` a secas, un 404 tiraba la
-       * sesión guardada a la pantalla de login SIN NINGÚN MENSAJE: la persona
-       * escribía la contraseña de nuevo creyendo que se le había vencido. Ese era
-       * el "al principio cuesta ingresar".
-       *
-       * El token NO se borra —`mostrarLogin` no limpia la sesión—, así que recargar
-       * vuelve a entrar solo. Por eso el mensaje dice recargar y no reingresar.
-       */
-      .catch(function (e) {
-        // Si la sesión venció DE VERDAD, `Sesion.caida()` ya pintó el login con su
-        // propio mensaje y borró el token. Pisarlo sería mentirle a la persona.
-        if (!Sesion.token) return;
-        mostrarLogin(e && e.transitorio
-          ? 'No se pudo contactar con el servidor. Su sesión sigue guardada: recargue la página en unos segundos.'
-          : 'No se pudo verificar la sesión. Ingrese de nuevo.');
+      .catch(function () {
+        if (!Sesion.token) return;   // venció de verdad: ya se mostró el login
+        if (intento < REANUDAR_ESPERAS_MS.length) {
+          setTimeout(function () { reanudar(intento + 1); }, REANUDAR_ESPERAS_MS[intento]);
+          return;
+        }
+        mostrarLogin('No se pudo conectar con el servidor. Su sesión sigue guardada: toque «Reintentar» ' +
+                     'en unos segundos.', true);
       });
   }
 
   /** Muestra la pantalla técnica, con o sin sesión iniciada. */
   function abrirConfig() {
+    arranqueResuelto();
     UI.mostrar(UI.id('login'), false);
     UI.mostrar(UI.id('app'), true);
     irA('config');
@@ -4196,6 +4484,7 @@ var App = (function () {
     });
 
     UI.id('loginForm').addEventListener('submit', login);
+    UI.id('loginReintentar').addEventListener('click', function () { Audio_.desbloquear(); reanudar(0); });
     UI.id('btnSalir').addEventListener('click', salir);
     UI.id('btnTema').addEventListener('click', Tema.alternar);
     Pozo.conectar();
