@@ -451,6 +451,8 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
 }
 
 .sala-card {
+  display: flex;
+  flex-direction: column;
   position: relative;
   overflow: hidden;
   border: 1px solid var(--borde);
@@ -544,9 +546,21 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
 }
 
-.sala-cuerpo { padding: var(--sp-4) var(--sp-5) var(--sp-5); position: relative; }
+.sala-cuerpo {
+  padding: var(--sp-4) var(--sp-5) var(--sp-5);
+  position: relative;
+  flex: 1;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto auto auto 1fr;
+}
+.sala-cuerpo > * {
+  grid-column: 1 / -1;
+}
 
 .sala-badge {
+  grid-column: 1;
+  grid-row: 1;
   display: inline-block;
   font-size: 10.5px; font-weight: 700;
   letter-spacing: 0.09em; text-transform: uppercase;
@@ -554,16 +568,19 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
   margin-bottom: 7px;
 }
 
-.sala-card h3 { font-size: 17.5px; margin-bottom: 6px; }
+.sala-card h3 { grid-row: 2; font-size: 17.5px; margin-bottom: 6px; }
 .sala-card .manager {
+  grid-row: 4;
   font-size: 12.5px; color: var(--txt-dim);
-  display: flex; align-items: center; gap: 7px;
+  display: flex; align-items: flex-start; gap: 7px;
+  margin-bottom: var(--sp-4);
 }
-.sala-card .manager .material-symbols-rounded { font-size: 17px; }
+.sala-card .manager .material-symbols-rounded { font-size: 17px; flex: none; }
 
 .sala-card .pie {
+  grid-row: 5;
   position: relative;
-  margin-top: var(--sp-4);
+  margin-top: auto;
   padding-top: var(--sp-3);
   border-top: 1px solid var(--borde);
   display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
@@ -586,6 +603,87 @@ main { flex: 1; padding: clamp(16px, 3vw, 30px); max-width: 1420px; width: 100%;
   animation: pulso 1.7s ease-out infinite;
 }
 @keyframes pulso { 0% { transform: scale(0.7); opacity: 1; } 100% { transform: scale(1.7); opacity: 0; } }
+
+/* ── Reuniones configuradas (oct 2026) ─────────────────────────────────────
+   La de AHORA se destaca; la plataforma va chica en la esquina de la portada
+   (decisión del dueño: «de una manera muy discreta»). */
+.sala-card.es-ahora { border-color: rgba(16, 185, 129, 0.55); box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.35); }
+.sala-cuando {
+  grid-column: 2;
+  grid-row: 1;
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-left: 8px; margin-bottom: 7px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--txt-azul);
+}
+.sala-cuando.ahora { color: var(--txt-verde); }
+.sala-horario {
+  grid-row: 3;
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12.5px; color: var(--txt-dim); margin-bottom: 4px;
+}
+.sala-horario .material-symbols-rounded { font-size: 17px; }
+.sala-plataforma {
+  position: absolute; left: 10px; bottom: 9px; z-index: 1;
+  padding: 2px 8px; border-radius: var(--r-full);
+  background: rgba(7, 19, 34, 0.72); color: rgba(255, 255, 255, 0.88);
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.03em;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+/* Solo en las reuniones sin imagen: una portada vacía se lee como «no cargó». */
+.sala-portada-ico {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  font-size: 64px; color: rgba(255, 255, 255, 0.22);
+}
+/* Una foto subida por el Director llena la portada; los escudos van enteros (contain). */
+.sala-portada.es-foto img { object-fit: cover; padding: 0; }
+.salas-sep {
+  grid-column: 1 / -1;
+  margin-top: var(--sp-2);
+  font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--txt-mute);
+}
+
+/* ── El editor de reuniones ── */
+.reu-cabecera { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.reu-cabecera > div { flex: 1; min-width: 220px; }
+.reu-form { max-width: 720px; margin-bottom: var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-4); }
+.reu-form h3 { margin: 0; }
+.reu-grupo { border: 1px solid var(--borde); border-radius: var(--r-md); padding: var(--sp-3) var(--sp-4); margin: 0; }
+.reu-grupo legend { font-size: 12.5px; font-weight: 600; color: var(--txt-dim); padding: 0 6px; }
+.reu-opcion { display: flex; align-items: center; gap: 8px; font-size: 14px; padding: 4px 0; cursor: pointer; }
+.reu-nota { color: var(--txt-mute); font-size: 12.5px; }
+.reu-orgs { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 6px 0 0 26px; }
+.reu-grupo #reuEnlace { margin-top: 8px; }
+.reu-dias { display: flex; flex-wrap: wrap; gap: 6px; }
+.reu-dia input { position: absolute; opacity: 0; pointer-events: none; }
+.reu-dia span {
+  display: inline-block; min-width: 46px; text-align: center;
+  padding: 7px 10px; border: 1px solid var(--borde); border-radius: var(--r-full);
+  font-size: 13px; font-weight: 600; color: var(--txt-dim); cursor: pointer;
+}
+.reu-dia input:checked + span { background: var(--azul-soft); border-color: rgba(59, 130, 246, 0.45); color: var(--txt-azul); }
+.reu-dia input:focus-visible + span { box-shadow: 0 0 0 3px var(--azul-soft); }
+.reu-fila { display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: flex-end; }
+.reu-fila .campo { flex: 1; min-width: 140px; }
+.reu-acciones { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.reu-espacio { flex: 1; }
+.reu-lista { display: flex; flex-direction: column; gap: 8px; margin-bottom: var(--sp-5); }
+.reu-vacia { color: var(--txt-dim); font-size: 14px; }
+.reu-item {
+  display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap;
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--borde); border-radius: var(--r-md); background: var(--surface);
+}
+.reu-item.pausada { opacity: 0.7; }
+.reu-item-txt { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 2px; }
+.reu-item-sub { font-size: 12.5px; color: var(--txt-dim); }
+.reu-item-choque { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--txt-ambar); }
+.reu-item-choque .material-symbols-rounded { font-size: 16px; }
+.reu-item [data-editar] { margin-left: auto; }
+.reu-ingreso { max-width: 720px; }
+.reu-ingreso h3 { margin: 0 0 4px; }
+.reu-ingreso p { color: var(--txt-dim); font-size: 13px; margin: 0 0 var(--sp-3); }
 
 
 /* ══════════════════════════════════════════════════════════════════════════

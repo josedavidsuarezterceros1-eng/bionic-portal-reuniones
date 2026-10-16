@@ -1301,6 +1301,7 @@ var Sala = (function () {
     S.asisFaltan = null;
     S.asisIngreso = null;
     S.asisTarde = false;
+    S.asisNoCuenta = '';   // la reunión anterior podía no ser la de ingreso; esta, sí
     S.redCaida = false;
     S.ceroPedido = null;
     S.verOrdinal = null;
@@ -2498,6 +2499,21 @@ var Sala = (function () {
     // de la sala, `S.estado` ya es null. El `.catch` de esa promesa se tragaba el
     // TypeError sin decir nada, que es peor que el error mismo.
     if (!S.estado || !S.estado.sala) return;
+    /*
+     * 🗓️ Una reunión que no es la de ingreso no registra asistencia (oct 2026,
+     * decisión del dueño). Lo dice el SERVIDOR (`asistencia.cuenta`, o el latido
+     * rechazado): acá no se compara ninguna hora.
+     */
+    var asisE = S.estado.asistencia || {};
+    if (asisE.cuenta === false || S.asisNoCuenta) {
+      cont.innerHTML = '<div class="aviso aviso-info">' +
+        '<span class="material-symbols-rounded">info</span>' +
+        '<span><strong>Esta reunión no registra asistencia</strong><br>' +
+        'La asistencia es la de las reuniones de ingreso' +
+        (asisE.ingresoHora ? ' (en este turno, la de las ' + UI.esc(asisE.ingresoHora) + ')' : '') +
+        '.</span></div>' + verifHtml();
+      return;
+    }
     if (!S.estado.sala.abierta) {
       cont.innerHTML = '<p style="font-size:13px;color:var(--txt-dim)">Se registra durante la reunión.</p>' + verifHtml();
       return;
@@ -2883,6 +2899,17 @@ var Sala = (function () {
                enReunion: S.enReunion, camaraActiva: S.enReunion })
       .then(function (r) {
         if (!r || !r.ok) return;
+        /*
+         * Esta reunión no es la de ingreso (oct 2026): el servidor no cuenta nada. Se
+         * corta el latido —seguir mandándolo sería un viaje por minuto para nada— y el
+         * panel lo explica (`renderAsistencia`).
+         */
+        if (r.noCuenta) {
+          S.asisNoCuenta = r.motivo || 'Esta reunión no registra asistencia.';
+          clearInterval(S.timerAsis); S.timerAsis = null;
+          renderAsistencia();
+          return;
+        }
         S.asisFaltan = (r.faltanMin != null) ? r.faltanMin : r.faltan;
         // La hora de ingreso y la puntualidad las decide el SERVIDOR; acá solo
         // se guardan para pintarlas. Ver `renderAsistencia`.
@@ -3140,6 +3167,7 @@ var Dashboard = (function () {
         if (!r || !r.ok) return;
         avisoCaida = false;
         pintar(r.salas);
+        App.aplicarIngreso(r.ingreso);
       })
       .catch(function (e) {
         if (avisoCaida) return;
@@ -3162,24 +3190,53 @@ var Dashboard = (function () {
    */
   var PORTADA = { sirari: 'img/sirari.svg', leones: 'img/leones.svg', jaguares: 'img/jaguares.svg' };
 
+  /*
+   * 🗓️ Desde oct 2026 las reuniones las configura el Director, y el SERVIDOR las manda
+   * ordenadas para quien mira: primero la suya de ahora (o la próxima de hoy), después
+   * el resto de las suyas, y las demás al final. Acá no se reordena nada.
+   */
   function pintar(salas) {
     var cont = UI.id('grillaSalas');
+    var hayOtras = salas.some(function (s) { return s.mia === false; });
+    var yaSeparo = false;
     var html = salas.map(function (s) {
       var e = ESTADO[s.estado] || ESTADO.offline;
-      var img = PORTADA[s.id];
-      return '' +
-        '<button class="sala-card" data-sala="' + UI.esc(s.id) + '"' +
+      // La imagen que subió el Director; sin ella, la portada de siempre (si la hay).
+      var img = s.imagen || PORTADA[s.id];
+      /*
+       * Un separador antes de la primera que NO es suya, solo si además hay suyas:
+       * con todas ajenas (alguien sin grupo) sería un título sobre nada.
+       */
+      var sep = '';
+      if (hayOtras && s.mia === false && !yaSeparo) {
+        yaSeparo = true;
+        if (salas.some(function (x) { return x.mia; })) sep = '<div class="salas-sep">Otras reuniones</div>';
+      }
+      var cuando = s.ahora
+        ? '<span class="sala-cuando ahora"><span class="latido"></span>Ahora</span>'
+        : (s.hoyHora ? '<span class="sala-cuando">Hoy ' + UI.esc(s.hoyHora) + '</span>' : '');
+      return sep +
+        '<button class="sala-card' + (s.ahora ? ' es-ahora' : '') + '" data-sala="' + UI.esc(s.id) + '"' +
           ' data-meet="' + UI.esc(s.meetUrl || '') + '"' +
+          ' data-cuenta="' + (s.cuentaAsistencia === false ? '0' : '1') + '"' +
           ' style="--acento:' + UI.esc(s.color) + '">' +
-          '<div class="sala-portada">' +
-            (img ? '<img src="' + UI.esc(img) + '" alt="" loading="lazy">' : '') +
+          '<div class="sala-portada' + (s.imagen ? ' es-foto' : '') + '">' +
+            // Sin imagen (una reunión nueva): un ícono, no un recuadro oscuro vacío.
+            // Solo ahí: los escudos tienen fondo transparente y lo dejarían ver detrás.
+            (img ? '<img src="' + UI.esc(img) + '" alt="" loading="lazy"' +
+                   (s.imagen ? ' data-portada="' + UI.esc(PORTADA[s.id] || '') + '"' : '') + '>'
+                 : '<span class="material-symbols-rounded sala-portada-ico">groups</span>') +
             '<span class="chip ' + e.chip + ' sala-estado">' +
               (s.estado === 'live' ? '<span class="latido"></span>' : '') + e.txt +
             '</span>' +
+            // La plataforma, discreta en la esquina (decisión del dueño). Sale del enlace.
+            (s.plataforma ? '<span class="sala-plataforma">' + UI.esc(s.plataforma) + '</span>' : '') +
           '</div>' +
           '<div class="sala-cuerpo">' +
-            '<span class="sala-badge">' + UI.esc(s.badge) + '</span>' +
+            '<span class="sala-badge">' + UI.esc(s.badge) + '</span>' + cuando +
             '<h3>' + UI.esc(s.nombre) + '</h3>' +
+            (s.horario ? '<div class="sala-horario">' +
+              '<span class="material-symbols-rounded">schedule</span>' + UI.esc(s.horario) + '</div>' : '') +
             '<div class="manager">' +
               '<span class="material-symbols-rounded">manage_accounts</span>' +
               UI.esc(s.manager) +
@@ -3239,7 +3296,12 @@ var Dashboard = (function () {
          */
         if (url) window.open(url, '_blank', 'noopener');
         App.irASala(c.getAttribute('data-sala'));
-        if (url) Sala.alEntrarAReunion(true);
+        /*
+         * Solo una reunión de INGRESO arranca el conteo (oct 2026). Si igual lo
+         * arrancara, el servidor lo rechaza (`noCuenta`): quien decide es él, esto
+         * solo ahorra un viaje y un cartel que diga «contando» para nada.
+         */
+        if (url && c.getAttribute('data-cuenta') !== '0') Sala.alEntrarAReunion(true);
       };
     });
 
@@ -3255,6 +3317,17 @@ var Dashboard = (function () {
      */
     Array.prototype.forEach.call(cont.querySelectorAll('.sala-portada img'), function (im) {
       im.onerror = function () {
+        /*
+         * La imagen que subió el Director vive en Drive: si deja de estar compartida,
+         * cae a la portada de siempre (si la sala tiene) y si no, se saca.
+         */
+        var portada = im.getAttribute('data-portada');
+        if (portada !== null) {
+          im.removeAttribute('data-portada');
+          im.parentNode.classList.remove('es-foto');
+          if (portada) { im.src = portada; return; }
+          im.remove(); return;
+        }
         if (im.getAttribute('data-respaldo')) { im.remove(); return; }
         im.setAttribute('data-respaldo', '1');
         // Sin expresión regular a propósito: sabemos que la ruta termina en '.svg',
@@ -3853,6 +3926,13 @@ var Equipo = (function () {
 
   var TXT_TURNO = { 'MAÑANA': 'Turno mañana', 'TARDE': 'Turno tarde' };
 
+  /** La hora de ingreso de la lista: {min, txt} o null. Ver el comentario en `pintarEntrar`. */
+  function inicioDe(r) {
+    var m = String(r.inicioTexto || '').match(/^(\d{1,2}):(\d{2})$/);
+    if (m) return { min: parseInt(m[1], 10) * 60 + parseInt(m[2], 10), txt: r.inicioTexto };
+    return r.inicioHora ? { min: r.inicioHora * 60, txt: r.inicioHora + ':00' } : null;
+  }
+
   function pintarSala(r) {
     /*
      * `data-listo`: la respuesta LLEGÓ. Sin esta marca, un check de «el asesor no
@@ -3895,8 +3975,9 @@ var Equipo = (function () {
     var cuenta = function (s) { return ps.filter(function (p) { return !p.entroDespues && situ(p) === s; }).length; };
     var pend = pendientes('sala');
 
+    var iniSub = inicioDe(r);
     UI.id('equipoSub').textContent = (TXT_TURNO[r.turno] || r.turno) +
-      (r.inicioHora ? ' · ' + r.inicioHora + ':00' : '') + ' · ' + ps.length + (ps.length === 1 ? ' persona' : ' personas');
+      (iniSub ? ' · ' + iniSub.txt : '') + ' · ' + ps.length + (ps.length === 1 ? ' persona' : ' personas');
     var ausentes = cuenta('AUSENTE') + ps.filter(function (p) { return p.entroDespues; }).length;
     var chip = function (n, uno, varios, clase) {
       return n ? '<span class="chip' + (clase ? ' ' + clase : '') + '">' + n + ' ' + (n === 1 ? uno : varios) + '</span>' : '';
@@ -3935,13 +4016,20 @@ var Equipo = (function () {
      * el que lo recibe a las 7:45 ya no le cree al siguiente. La hora de Bolivia
      * sale del reloj alineado con el servidor, no del de la computadora.
      */
-    var horaBo = parseInt(new Intl.DateTimeFormat('en-US',
-      { timeZone: 'America/La_Paz', hour: 'numeric', hour12: false }).format(new Date(Reloj.ahora())), 10);
-    var empezo = !r.inicioHora || horaBo >= r.inicioHora;
+    var partes = new Intl.DateTimeFormat('en-US', { timeZone: 'America/La_Paz', hour: 'numeric',
+      minute: 'numeric', hour12: false }).formatToParts(new Date(Reloj.ahora()));
+    var parte = function (t) { var x = partes.filter(function (q) { return q.type === t; })[0]; return x ? parseInt(x.value, 10) % 24 : 0; };
+    var minBo = parte('hour') * 60 + parte('minute');
+    /*
+     * Desde oct 2026 la hora de ingreso se configura y puede traer minutos (8:30):
+     * manda `inicioTexto`; `inicioHora` queda para un backend todavía sin publicar.
+     */
+    var ini = inicioDe(r);
+    var empezo = !ini || minBo >= ini.min;
     var mensaje = function (p) {
       return empezo
         ? 'Hola ' + p.nombre + ', la reunión ya empezó. ¿Tiene algún inconveniente para entrar?'
-        : 'Hola ' + p.nombre + ', la reunión empieza a las ' + r.inicioHora + ':00. ¿Ya se está conectando?';
+        : 'Hola ' + p.nombre + ', la reunión empieza a las ' + ini.txt + '. ¿Ya se está conectando?';
     };
     cont.innerHTML = '<section class="eq-entrar">' +
       '<h5><span class="eq-latido"></span> Todavía no entraron a la sala <span class="eq-dim">· ' + faltan.length + '</span></h5>' +
@@ -4267,6 +4355,288 @@ var Config = (function () {
 
 
 /* ══════════════════════════════════════════════════════════════════════════
+   Reuniones — el editor del Director (oct 2026)
+   ══════════════════════════════════════════════════════════════════════════ */
+/*
+ * Qué reuniones hay, cuándo, para quién y con qué enlace. Lo que se guarda acá es lo
+ * que la gente ve en «Salas».
+ *
+ * 🔴 NO decide nada: quién puede editar, qué organizaciones son de su filial, si el
+ * enlace sirve y con qué otras reuniones choca lo dice el SERVIDOR. La pestaña se
+ * esconde a quien no administra, pero esconderla no protege nada.
+ *
+ * ⚠️ Guardar, pausar y borrar ESCRIBEN y no se reintentan (no están en POST_REPETIBLE):
+ * un reintento de «crear» dejaría la reunión dos veces.
+ */
+var Reuniones = (function () {
+  var DIAS = ['LUN', 'MAR', 'MIE', 'JUE', 'VIE', 'SAB', 'DOM'];
+  var DIAS_TXT = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+  var R = { datos: null, editando: null, enviando: false };
+
+  /* El ícono sale del tipo con LITERALES: el auditor de `icon_names` no ve uno que llegue en una variable. */
+  function aviso(caja, tipo, html) {
+    UI.id(caja).innerHTML = html ? '<div class="aviso aviso-' + tipo + '">' +
+      '<span class="material-symbols-rounded">' + (tipo === 'error' ? 'error' : 'info') + '</span>' +
+      '<span>' + html + '</span></div>' : '';
+  }
+
+  function cargar() {
+    aviso('reuAviso', 'info', 'Cargando las reuniones…');
+    API.get({ accion: 'reunionesEditor', token: Sesion.token })
+      .then(function (r) {
+        if (!r || !r.ok) {
+          aviso('reuAviso', 'error', UI.esc((r && r.message) || 'No se pudieron leer las reuniones.'));
+          return;
+        }
+        R.datos = r;
+        aviso('reuAviso');
+        pintarLista();
+        pintarIngreso();
+        App.aplicarIngreso(r.ingreso);
+      })
+      .catch(function (e) {
+        aviso('reuAviso', 'error', UI.esc((e && e.message) || 'Error de conexión.'));
+      });
+  }
+
+  function textoAudiencia(x) {
+    if (x.audTipo !== 'organizaciones') return 'Toda la filial ' + x.filial;
+    return (x.audiencia.length === 1 ? 'Organización ' : 'Organizaciones ') + x.audiencia.join(', ');
+  }
+
+  function pintarLista() {
+    var lista = (R.datos && R.datos.reuniones) || [];
+    var cont = UI.id('reuLista');
+    if (!lista.length) {
+      cont.innerHTML = '<p class="reu-vacia">Todavía no hay reuniones. Toque «Nueva reunión».</p>';
+      return;
+    }
+    cont.innerHTML = lista.map(function (x) {
+      var pausada = x.estado === 'pausada';
+      return '<div class="reu-item' + (pausada ? ' pausada' : '') + '">' +
+        '<div class="reu-item-txt">' +
+          '<strong>' + UI.esc(x.nombre) + '</strong>' +
+          '<span class="reu-item-sub">' + UI.esc(x.horario) + '</span>' +
+          '<span class="reu-item-sub">' + UI.esc(textoAudiencia(x)) + ' · ' + UI.esc(x.plataforma || '') + '</span>' +
+          (x.choques && x.choques.length
+            ? '<span class="reu-item-choque"><span class="material-symbols-rounded">warning</span>Se pisa con: ' +
+              UI.esc(x.choques.map(function (c) { return c.nombre; }).join(', ')) + '</span>'
+            : '') +
+        '</div>' +
+        (pausada ? '<span class="chip chip-ambar">Pausada</span>' : '') +
+        '<button class="btn" type="button" data-editar="' + UI.esc(x.id) + '">' +
+          '<span class="material-symbols-rounded">edit_note</span> Editar</button>' +
+      '</div>';
+    }).join('');
+  }
+
+  function pintarIngreso() {
+    var ing = (R.datos && R.datos.ingreso) || {};
+    UI.id('ingManana').value = ing['MAÑANA'] || '';
+    UI.id('ingTarde').value = ing['TARDE'] || '';
+  }
+
+  /* ── el formulario ── */
+
+  function opcionesFilial() {
+    return (R.datos && R.datos.filiales) || [];
+  }
+
+  function filialElegida() {
+    var fs = opcionesFilial();
+    var v = UI.id('reuFilial').value;
+    return fs.filter(function (f) { return f.valor === v; })[0] || fs[0] || { valor: '', nombre: '', organizaciones: [] };
+  }
+
+  function pintarOrgs(marcadas) {
+    var f = filialElegida();
+    var marc = (marcadas || []).map(function (m) { return String(m).toUpperCase(); });
+    UI.id('reuOrgs').innerHTML = f.organizaciones.length
+      ? f.organizaciones.map(function (o) {
+          return '<label class="reu-opcion"><input type="checkbox" value="' + UI.esc(o) + '"' +
+            (marc.indexOf(o.toUpperCase()) >= 0 ? ' checked' : '') + '> ' + UI.esc(o) + '</label>';
+        }).join('')
+      : '<p class="reu-nota">Esta filial todavía no tiene organizaciones.</p>';
+  }
+
+  function radio(nombre) {
+    var r = document.querySelector('input[name="' + nombre + '"]:checked');
+    return r ? r.value : '';
+  }
+
+  function ponerRadio(nombre, valor) {
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="' + nombre + '"]'), function (r) {
+      r.checked = r.value === valor;
+    });
+  }
+
+  function alCambiarOpciones() {
+    UI.mostrar(UI.id('reuOrgs'), radio('reuAud') === 'organizaciones');
+    UI.mostrar(UI.id('reuEnlace'), radio('reuModo') === 'propio');
+  }
+
+  function abrir(x) {
+    R.editando = x ? x.id : 'nueva';
+    var fs = opcionesFilial();
+    UI.id('reuFilial').innerHTML = fs.map(function (f) {
+      return '<option value="' + UI.esc(f.valor) + '">' + UI.esc(f.nombre) + '</option>';
+    }).join('');
+    UI.mostrar(UI.id('reuFilialCampo'), fs.length > 1);
+    if (x) {
+      var fx = fs.filter(function (f) { return f.nombre.toUpperCase() === String(x.filial).toUpperCase(); })[0];
+      if (fx) UI.id('reuFilial').value = fx.valor;
+    }
+    UI.id('reuFormTitulo').textContent = x ? 'Editar «' + x.nombre + '»' : 'Nueva reunión';
+    UI.id('reuNombre').value = x ? x.nombre : '';
+    ponerRadio('reuAud', x ? x.audTipo : 'filial');
+    pintarOrgs(x && x.audTipo === 'organizaciones' ? x.audiencia : []);
+    var dias = x ? x.dias : [];
+    UI.id('reuDias').innerHTML = DIAS.map(function (d, i) {
+      return '<label class="reu-dia"><input type="checkbox" value="' + d + '"' +
+        (dias.indexOf(d) >= 0 ? ' checked' : '') + '><span>' + DIAS_TXT[i] + '</span></label>';
+    }).join('');
+    UI.id('reuHora').value = x ? x.hora : '08:00';
+    UI.id('reuDur').value = x ? x.duracion : 60;
+    ponerRadio('reuModo', x ? x.enlaceModo : 'portal');
+    UI.id('reuEnlace').value = x ? (x.enlace || '') : '';
+    alCambiarOpciones();
+    var pausada = !!(x && x.estado === 'pausada');
+    UI.mostrar(UI.id('reuPausar'), !!x && !pausada);
+    UI.mostrar(UI.id('reuReactivar'), pausada);
+    UI.mostrar(UI.id('reuBorrar'), !!x);
+    aviso('reuFormAviso');
+    UI.mostrar(UI.id('reuForm'), true);
+    UI.id('reuForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    UI.id('reuNombre').focus();
+  }
+
+  function cerrar() {
+    R.editando = null;
+    UI.mostrar(UI.id('reuForm'), false);
+  }
+
+  function leer() {
+    var marcados = function (sel) {
+      return Array.prototype.map.call(document.querySelectorAll(sel + ' input:checked'), function (c) { return c.value; });
+    };
+    var aud = radio('reuAud');
+    return {
+      id: R.editando && R.editando !== 'nueva' ? R.editando : '',
+      nombre: UI.id('reuNombre').value,
+      filial: filialElegida().valor,
+      audTipo: aud,
+      audiencia: aud === 'organizaciones' ? marcados('#reuOrgs') : [],
+      dias: marcados('#reuDias'),
+      hora: UI.id('reuHora').value,
+      duracion: parseInt(UI.id('reuDur').value, 10),
+      enlaceModo: radio('reuModo'),
+      enlace: UI.id('reuEnlace').value.trim()
+    };
+  }
+
+  function guardar(ev) {
+    if (ev) ev.preventDefault();
+    if (R.enviando) return;
+    R.enviando = true;
+    UI.id('reuGuardar').disabled = true;
+    API.post({ accion: 'reunionGuardar', token: Sesion.token, reunion: leer() })
+      .then(function (r) {
+        if (!r || !r.ok) {
+          aviso('reuFormAviso', 'error', UI.esc((r && r.message) || 'No se pudo guardar.'));
+          return;
+        }
+        UI.toast('Reunión guardada.', 'ok');
+        if (r.choques && r.choques.length) {
+          UI.toast('Ojo: se pisa con ' + r.choques.map(function (c) { return c.nombre; }).join(', ') +
+            '. A quien esté en las dos le aparece primero la de alcance más amplio.', 'info', 9000);
+        }
+        if (r.avisoEnlace) UI.toast(r.avisoEnlace, 'info', 9000);
+        avisoCalendario(r.calendario);
+        cerrar();
+        cargar();
+      })
+      .catch(function (e) { aviso('reuFormAviso', 'error', UI.esc((e && e.message) || 'Error de conexión.')); })
+      .then(function () { R.enviando = false; UI.id('reuGuardar').disabled = false; });
+  }
+
+  /*
+   * El servidor sincroniza el calendario al guardar una reunión con el Meet del Portal.
+   * Si el enlace no salió, se dice: la tarjeta quedaría sin «Entrar a la reunión».
+   */
+  function avisoCalendario(cal) {
+    if (!cal || cal.ok) return;
+    UI.toast('La reunión se guardó, pero el enlace de Meet todavía no se creó' +
+      (cal.motivo ? ' (' + cal.motivo + ')' : '') + '. Se vuelve a intentar a las 6:00, o pídale al ' +
+      'administrador que corra sincronizarCalendario.', 'error', 12000);
+  }
+
+  function cambiarEstado(estado) {
+    var id = R.editando;
+    if (!id || id === 'nueva' || R.enviando) return;
+    if (estado === 'borrada' && !window.confirm('¿Borrar esta reunión? Deja de aparecer en «Salas», y si usa el Meet ' +
+        'del Portal, su reunión del calendario se cancela mañana.')) return;
+    R.enviando = true;
+    API.post({ accion: 'reunionEstado', token: Sesion.token, id: id, estado: estado })
+      .then(function (r) {
+        if (!r || !r.ok) { aviso('reuFormAviso', 'error', UI.esc((r && r.message) || 'No se pudo cambiar.')); return; }
+        UI.toast(estado === 'borrada' ? 'Reunión borrada.' : (estado === 'pausada' ? 'Reunión pausada.' : 'Reunión reactivada.'), 'ok');
+        avisoCalendario(r.calendario);
+        cerrar();
+        cargar();
+      })
+      .catch(function (e) { aviso('reuFormAviso', 'error', UI.esc((e && e.message) || 'Error de conexión.')); })
+      .then(function () { R.enviando = false; });
+  }
+
+  function guardarIngreso() {
+    if (R.enviando) return;
+    R.enviando = true;
+    API.post({ accion: 'ingresoGuardar', token: Sesion.token,
+               manana: UI.id('ingManana').value, tarde: UI.id('ingTarde').value })
+      .then(function (r) {
+        if (!r || !r.ok) { UI.toast((r && r.message) || 'No se pudo guardar.', 'error'); return; }
+        UI.toast('Horarios de ingreso guardados.', 'ok');
+        /*
+         * 🔴 Una reunión que estaba a la hora de ingreso y quedó fuera deja de registrar
+         * asistencia para todos: se dice cuál, para moverla (lo calcula el servidor).
+         */
+        if (r.sinAsistencia && r.sinAsistencia.length) {
+          UI.toast('Ojo: ' + r.sinAsistencia.join(', ') + ' ya no empieza a la hora de ingreso y deja de registrar ' +
+            'asistencia. Cámbiele la hora si debe seguir contándola.', 'error', 12000);
+        }
+        App.aplicarIngreso(r.ingreso);
+        cargar();
+      })
+      .catch(function (e) { UI.toast((e && e.message) || 'Error de conexión.', 'error'); })
+      .then(function () { R.enviando = false; });
+  }
+
+  function conectar() {
+    UI.id('btnReuNueva').addEventListener('click', function () { abrir(null); });
+    UI.id('reuForm').addEventListener('submit', guardar);
+    UI.id('reuCancelar').addEventListener('click', cerrar);
+    UI.id('reuPausar').addEventListener('click', function () { cambiarEstado('pausada'); });
+    UI.id('reuReactivar').addEventListener('click', function () { cambiarEstado('activa'); });
+    UI.id('reuBorrar').addEventListener('click', function () { cambiarEstado('borrada'); });
+    UI.id('btnIngresoGuardar').addEventListener('click', guardarIngreso);
+    UI.id('reuFilial').addEventListener('change', function () { pintarOrgs([]); });
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="reuAud"], input[name="reuModo"]'), function (r) {
+      r.addEventListener('change', alCambiarOpciones);
+    });
+    // Delegado: la lista se repinta entera en cada carga.
+    UI.id('reuLista').addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-editar]');
+      if (!b || !R.datos) return;
+      var x = R.datos.reuniones.filter(function (r) { return r.id === b.getAttribute('data-editar'); })[0];
+      if (x) abrir(x);
+    });
+  }
+
+  return { activar: function () { cerrar(); cargar(); }, conectar: conectar };
+})();
+
+
+/* ══════════════════════════════════════════════════════════════════════════
    App — router y arranque
    ══════════════════════════════════════════════════════════════════════════ */
 var App = (function () {
@@ -4280,6 +4650,9 @@ var App = (function () {
       UI.toast('Elija primero una sala.', 'info');
       nombre = 'dashboard';
     }
+    // El editor es de quien administra una filial. Esto es solo navegación: cada
+    // acción del editor se controla de nuevo en el servidor.
+    if (nombre === 'reuniones' && !(Sesion.usuario && Sesion.usuario.puedeAdministrar)) nombre = 'dashboard';
 
     if (vista === 'dashboard') Dashboard.desactivar();
     if (vista === 'sala' && nombre !== 'sala') Sala.salir();
@@ -4288,13 +4661,27 @@ var App = (function () {
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (t) {
       t.classList.toggle('activo', t.getAttribute('data-vista') === nombre);
     });
-    ['dashboard', 'sala', 'asistencia', 'config'].forEach(function (v) {
+    ['dashboard', 'sala', 'asistencia', 'reuniones', 'config'].forEach(function (v) {
       UI.mostrar(UI.id('vista-' + v), v === nombre);
     });
 
     if (nombre === 'dashboard') Dashboard.activar();
     if (nombre === 'asistencia') Asistencia.cargar();
     if (nombre === 'config') Config.activar();
+    if (nombre === 'reuniones') Reuniones.activar();
+  }
+
+  /*
+   * Las horas de ingreso (oct 2026: las configura el Director) en el selector de turno
+   * de la lista de verificación. Las manda el servidor en `yo`, `login` y `salas`.
+   */
+  function aplicarIngreso(ing) {
+    if (!ing) return;
+    var sel = UI.id('verifTurno');
+    Array.prototype.forEach.call(sel.options, function (o) {
+      var h = ing[o.value];
+      if (h) o.textContent = (o.value === 'TARDE' ? 'Tarde' : 'Mañana') + ' (' + h + ')';
+    });
   }
 
   /*
@@ -4350,7 +4737,7 @@ var App = (function () {
     UI.mostrar(UI.id('loginAviso'), !!msg);
   }
 
-  function entrarApp(usuario, salas) {
+  function entrarApp(usuario, salas, ingreso) {
     arranqueResuelto();
     // Antes de pintar nada: `irA('dashboard')` activa el Dashboard, y si las salas
     // llegan después ya disparó su propio pedido y el ahorro se pierde.
@@ -4359,6 +4746,8 @@ var App = (function () {
     UI.id('uFoto').innerHTML = UI.avatar(usuario.fotoUrl, usuario.nombre);
     UI.id('uNombre').textContent = usuario.nombre;
     UI.id('uCargo').textContent = usuario.cargo || '—';
+    UI.mostrar(UI.id('tabReuniones'), !!usuario.puedeAdministrar);
+    aplicarIngreso(ingreso);
     UI.mostrar(UI.id('login'), false);
     UI.mostrar(UI.id('app'), true);
     irA('dashboard');
@@ -4382,7 +4771,7 @@ var App = (function () {
         if (!r || !r.ok) { avisoLogin((r && r.message) || 'No se pudo ingresar.'); return; }
         Sesion.guardar(r.token, r.usuario, recordar);
         UI.id('loginPass').value = '';
-        entrarApp(r.usuario, r.salas);
+        entrarApp(r.usuario, r.salas, r.ingreso);
       })
       .catch(function (err) { avisoLogin(err.message || 'Error de conexión.'); })
       .then(function () { btn.disabled = false; });
@@ -4431,7 +4820,7 @@ var App = (function () {
     }
     API.get({ accion: 'yo', token: Sesion.token })
       .then(function (r) {
-        if (r && r.ok) { entrarApp(r.usuario, r.salas); return; }
+        if (r && r.ok) { entrarApp(r.usuario, r.salas, r.ingreso); return; }
         throw new Error((r && r.message) || 'El servidor no pudo confirmar la sesión.');
       })
       .catch(function () {
@@ -4488,6 +4877,7 @@ var App = (function () {
     UI.id('btnSalir').addEventListener('click', salir);
     UI.id('btnTema').addEventListener('click', Tema.alternar);
     Pozo.conectar();
+    Reuniones.conectar();
     UI.id('btnVolverSalas').addEventListener('click', function () { irA('dashboard'); });
     UI.id('btnRecargarAsistencia').addEventListener('click', Asistencia.cargar);
     UI.id('btnGuardarApi').addEventListener('click', Config.guardar);
@@ -4540,7 +4930,7 @@ var App = (function () {
 
   return {
     iniciar: iniciar, irA: irA, irASala: irASala,
-    mostrarLogin: mostrarLogin
+    mostrarLogin: mostrarLogin, aplicarIngreso: aplicarIngreso
   };
 })();
 
