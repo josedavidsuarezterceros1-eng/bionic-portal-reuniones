@@ -32,7 +32,17 @@ var Cfg = (function () {
      * actualizarla acá. Desde la pestaña Configuración se puede pisar sin tocar el
      * código: lo que se guarde en el navegador tiene prioridad sobre esta línea.
      */
-    URL_POR_DEFECTO: 'https://script.google.com/macros/s/AKfycbx8-OHPoWQhw6_4p0HcUFs-jQln8rll0tyA3MNdrtShpRWnvubfaAPm_B-FBYJUbcMcyQ/exec',
+    /*
+     * 🔴 Desde oct 2026 la dirección vive en UN solo lugar: el <meta name="portal-api">
+     * de index.html (la usa también el pedido adelantado de la sesión). Escrita acá y
+     * allá, una quedaría vieja, y el preview —que la reemplaza para no tocar el backend
+     * REAL— podría quedar apuntando a producción. Sin el <meta>, queda vacía y el
+     * portal pide configurarla (un fallo que se ve, no uno callado).
+     */
+    URL_POR_DEFECTO: (function () {
+      try { var m = document.querySelector('meta[name="portal-api"]'); return (m && m.content) || ''; }
+      catch (e) { return ''; }
+    })(),
 
     /*
      * 🔴 EL SONDEO RÁPIDO ES SOLO DE LA PANTALLA DEL ANFITRIÓN (oct 2026).
@@ -178,6 +188,18 @@ var API = (function () {
     }, repetible);
   }
 
+  /**
+   * Adopta la respuesta del pedido que hizo el <head> antes de que llegara este archivo
+   * (`window.__yoTemprano`, solo la sesión guardada). Pasa por el MISMO lector que
+   * cualquier otra: sesión vencida, token renovado y reloj se tratan igual. Sin reintento:
+   * si falla, quien la adopta pide de nuevo por el camino normal.
+   */
+  function adoptar(respPromesa) {
+    return respPromesa.then(leer, function () {
+      throw transitorio_(new Error('No se pudo contactar con el servidor. Revise la conexión.'));
+    });
+  }
+
   function get(params) {
     var url = Cfg.url();
     if (!url) return Promise.reject(new Error('Falta configurar la dirección del backend.'));
@@ -283,7 +305,7 @@ var API = (function () {
     return new Error('El servidor respondió ' + status + '.');
   }
 
-  return { post: post, get: get };
+  return { post: post, get: get, adoptar: adoptar };
 })();
 
 
@@ -4846,7 +4868,21 @@ var App = (function () {
       mostrarEntrando(intento ? 'Reconectando con el servidor… (intento ' + (intento + 1) + ' de ' +
                                 (REANUDAR_ESPERAS_MS.length + 1) + ')' : '');
     }
-    API.get({ accion: 'yo', token: Sesion.token })
+    /*
+     * En el primer intento, la respuesta que el <head> ya pidió (oct 2026). Si no sirve
+     * —fallo de red, página de Google, `ok:false`—, se pide de nuevo por el camino
+     * normal, con sus reintentos. Una sesión vencida NO: `leer` ya la cerró
+     * (`Sesion.caida`) y se corta acá, igual que antes.
+     */
+    var temprano = window.__yoTemprano;
+    window.__yoTemprano = null;
+    var pedirYo = function () { return API.get({ accion: 'yo', token: Sesion.token }); };
+    var pedido = (!intento && temprano && temprano.token === Sesion.token)
+      ? API.adoptar(temprano.resp)
+          .then(function (r) { return (r && r.ok) ? r : pedirYo(); },
+                function (e) { if (!Sesion.token) throw e; return pedirYo(); })
+      : pedirYo();
+    pedido
       .then(function (r) {
         if (r && r.ok) { entrarApp(r.usuario, r.salas, r.ingreso); return; }
         throw new Error((r && r.message) || 'El servidor no pudo confirmar la sesión.');
