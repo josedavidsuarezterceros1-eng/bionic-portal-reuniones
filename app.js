@@ -35,8 +35,28 @@ var Cfg = (function () {
     URL_POR_DEFECTO: 'https://script.google.com/macros/s/AKfycbx8-OHPoWQhw6_4p0HcUFs-jQln8rll0tyA3MNdrtShpRWnvubfaAPm_B-FBYJUbcMcyQ/exec',
 
     /*
-     * 🔴 DOS cadencias, y la lenta NO es lenta. Adentro de una sala no existe el
-     * modo barato, aunque parezca que no está pasando nada.
+     * 🔴 EL SONDEO RÁPIDO ES SOLO DE LA PANTALLA DEL ANFITRIÓN (oct 2026).
+     *
+     * El festejo se ve en la pantalla que el anfitrión comparte en Meet, y la
+     * producción se carga ANTES de la reunión: el participante no tiene nada que
+     * apretar durante la llamada y su pantalla no la muestra. Aun así preguntaba
+     * cada 3,5 s (2 s en el festejo), y seguía con la pestaña escondida detrás de
+     * Meet toda la reunión — y todo el día, si no la cerraba. Con 40 personas eso
+     * llena las ~30 ejecuciones simultáneas de Apps Script, y los guardados de todos
+     * (el pozo, la asistencia, el editor) hacían fila detrás: un ping que no hace
+     * nada llegó a tardar 42 s el 16-oct-2026.
+     *
+     *  · Anfitrión: 2 s en el festejo, 3,5 s en el horario de su reunión, 15 s fuera
+     *    de él (lo dice el servidor: `sala.enHorario`). No se frena con la pestaña
+     *    escondida: su pantalla es la que se comparte, y su lectura es la que hace
+     *    avanzar la ronda y renueva su presencia.
+     *  · Participante: 15 s con la pestaña a la vista; NADA con la pestaña escondida,
+     *    y al volver pregunta en el acto (`alVolverAlFrente`). El latido de asistencia
+     *    va aparte (1 por minuto) y no cambia.
+     *
+     * ⚠️ Lo de abajo explicaba por qué el participante no podía ir lento: tenía que
+     * anotar su venta DURANTE el conteo. Desde que el pozo se carga antes, eso ya no
+     * existe (`registrarProduccion_` responde «obsoleto»).
      *
      * Hubo una tercera cadencia de 10 s "para cuando la sala está cerrada" y el
      * test con dos navegadores la mató: el asesor se pasó el countdown ENTERO
@@ -53,7 +73,9 @@ var Cfg = (function () {
      * hay nada urgente que mirar.
      */
     POLL_ACTIVO_MS: 2000,    // llamada o destape en curso
-    POLL_SALA_MS: 3500,      // cualquier otro momento dentro de una sala
+    POLL_SALA_MS: 3500,      // el anfitrión, en el horario de su reunión
+    POLL_FUERA_MS: 15000,    // el anfitrión, fuera del horario y sin festejo
+    POLL_PARTICIPANTE_MS: 15000, // quien no conduce, con la pestaña a la vista
     ASIS_PING_MS: 60000,     // un latido por minuto con la cámara encendida
 
     url: function () {
@@ -1379,6 +1401,9 @@ var Sala = (function () {
 
   function poll() {
     if (!S.sala || enVuelo) return;
+    // El participante con la pestaña escondida no pregunta: está en Meet y su pantalla
+    // no muestra el festejo. La cadena se corta acá y la reanuda `alVolverAlFrente`.
+    if (document.hidden && S.estado && !S.estado.soyAnfitrion) return;
     enVuelo = true;
     var t0 = Date.now();
     API.get({ accion: 'estadoSala', token: Sesion.token, salaId: S.sala.id })
@@ -1530,7 +1555,10 @@ var Sala = (function () {
   }
 
   function cadencia() {
-    return hayShow(S.estado) ? Cfg.POLL_ACTIVO_MS : Cfg.POLL_SALA_MS;
+    var r = S.estado;
+    if (!r || !r.soyAnfitrion) return Cfg.POLL_PARTICIPANTE_MS;
+    if (hayShow(r)) return Cfg.POLL_ACTIVO_MS;
+    return (r.sala && r.sala.enHorario === false) ? Cfg.POLL_FUERA_MS : Cfg.POLL_SALA_MS;
   }
 
   /*
@@ -4937,6 +4965,7 @@ var App = (function () {
 // Expuesto solo lo que otros módulos necesitan nombrar entre sí.
 window.App = App;
 window.Sala = Sala;
+window.Cfg = Cfg;   // los tiempos, para que las pruebas los ajusten (no trae nada secreto)
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', App.iniciar);
 else App.iniciar();
