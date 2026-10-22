@@ -1117,6 +1117,12 @@ var Pozo = (function () {
       '<p class="pt-linea">' + [it.origen ? 'Origen: ' + UI.esc(it.origen) : '', it.ciudad ? UI.esc(it.ciudad) : '',
         it.telefono ? 'Tel: ' + UI.esc(it.telefono) : '']
         .filter(function (x) { return !!x; }).join(' · ') + '</p>' +
+      /* Desde oct 2026 el upline carga la venta de su gente: a nombre de quién va (la ve el
+         jefe) y quién la cargó (la ve el asesor). En el festejo sale siempre el asesor. */
+      ((it.de || it.cargadaPor) ? '<p class="pt-linea pt-quien">' + [
+        it.de ? 'A nombre de <b>' + UI.esc(it.de) + '</b>' : '',
+        it.cargadaPor ? 'La cargó <b>' + UI.esc(it.cargadaPor) + '</b>' : ''
+      ].filter(function (x) { return !!x; }).join(' · ') + '</p>' : '') +
     '</div>';
   }
 
@@ -1125,9 +1131,10 @@ var Pozo = (function () {
     var c = UI.id('pozoCuerpo');
     if (!c) return;
     var html = P.pendientes.map(function (it) {
-      return tarjeta(it, '<span class="chip chip-azul">En el pozo</span>' +
+      // La saca solo quien la cargó. Sin el campo (servidor viejo), como antes: todo era propio.
+      return tarjeta(it, '<span class="chip chip-azul">En el pozo</span>' + (it.puedeQuitar === false ? '' :
         '<button class="btn pt-quitar" data-quitar="' + UI.esc(it.id) + '" title="Sacar del pozo">' +
-          '<span class="material-symbols-rounded">cancel</span> Quitar</button>');
+          '<span class="material-symbols-rounded">cancel</span> Quitar</button>'));
     }).join('') + P.destapadas.map(function (it) {
       return tarjeta(it, '<span class="chip chip-verde"><span class="material-symbols-rounded">check_circle</span> ' +
         'Cantada' + (it.cantada ? ' · ' + UI.esc(it.cantada) : '') + '</span>');
@@ -1192,7 +1199,7 @@ var Pozo = (function () {
     if (b.cargando) { c.innerHTML = '<p class="pozo-vacio">Buscando…</p>'; return; }
     if (b.error) { c.innerHTML = '<p class="pozo-vacio pozo-error">' + UI.esc(b.error) + '</p>'; return; }
     c.innerHTML = tarjeta(b.item) + (b.item.yaCargada
-      ? '<p class="pozo-vacio">Ya está en su pozo, esperando turno.</p>'
+      ? '<p class="pozo-vacio">' + (b.item.de ? 'Ya está en el pozo, esperando turno.' : 'Ya está en su pozo, esperando turno.') + '</p>'
       : botonCargar(b.item));
     conectarToques(c);
   }
@@ -1206,10 +1213,13 @@ var Pozo = (function () {
       tipo: datos.tipo, telefono: datos.telefono,
       alumno: datos.alumno || '', alumno2: datos.alumno2 || '', titular: datos.titular || '',
       ciudad: datos.ciudad || '', plan: datos.plan || '', usuarios: datos.usuarios || '',
-      matId: datos.matId || ''
+      matId: datos.matId || '',
+      // Desde la lista del equipo se carga por el ID del lead (esa lista no trae su teléfono).
+      leadId: datos.leadId || ''
     }).then(function (r) {
       if (!r || !r.ok) { UI.toast((r && r.message) || 'No se pudo cargar.', 'error', 7000); return false; }
-      UI.toast('Cargada. Se canta cuando el anfitrión pida producción.', 'ok');
+      UI.toast(r.a ? 'Cargada a nombre de ' + r.a + '. En el festejo sale con su nombre y su foto.'
+                   : 'Cargada. Se canta cuando el anfitrión pida producción.', 'ok');
       if (r.aviso) UI.toast(r.aviso, 'info', 6000);
       aplicar(r.pozo);
       P.buscado = null;
@@ -1283,6 +1293,8 @@ var Pozo = (function () {
 
   return {
     cuantas: cuantas, refrescar: refrescar, entrar: entrar, conectar: conectar, alVolver: alVolver,
+    // La usa la lista del equipo (el jefe carga la venta de su gente, oct 2026).
+    cargar: cargar,
     /* ⚠️ Al salir de la sesión: la pantalla del pozo no puede quedar mostrando lo de
        la sesión anterior. */
     limpiar: function () {
@@ -3270,7 +3282,8 @@ var Dashboard = (function () {
           ' data-meet="' + UI.esc(s.meetUrl || '') + '"' +
           ' data-cuenta="' + (s.cuentaAsistencia === false ? '0' : '1') + '"' +
           ' style="--acento:' + UI.esc(s.color) + '">' +
-          '<div class="sala-portada' + (s.imagen ? ' es-foto' : '') + '">' +
+          // Un LOGO subido (con transparencia) se ve entero, como los escudos; una foto llena la portada.
+          '<div class="sala-portada' + (s.imagen && s.imagenModo !== 'logo' ? ' es-foto' : '') + '">' +
             // Sin imagen (una reunión nueva): un ícono, no un recuadro oscuro vacío.
             // Solo ahí: los escudos tienen fondo transparente y lo dejarían ver detrás.
             (img ? '<img src="' + UI.esc(img) + '" alt="" loading="lazy"' +
@@ -3390,6 +3403,8 @@ var Dashboard = (function () {
   }
 
   return {
+    // El escudo de siempre de una sala (o ''). Lo usa el editor de reuniones, sin copiar el mapa.
+    portada: function (id) { return PORTADA[id] || ''; },
     activar: function () {
       /*
        * Si el arranque ya trajo las salas, se pintan en el acto y se ahorra el
@@ -4093,7 +4108,10 @@ var Equipo = (function () {
     '</section>';
   }
 
-  /** La producción del equipo que no está en el pozo: solo para recordársela. */
+  /**
+   * La producción del equipo que no está en el pozo. Desde oct 2026 el jefe la puede
+   * CARGAR él (sale a nombre del asesor) o recordársela por WhatsApp.
+   */
   function pintarProd() {
     var cont = UI.id('equipoProd');
     if (!cont) return;
@@ -4119,11 +4137,26 @@ var Equipo = (function () {
         '<p class="pt-linea">' + [it.titular ? 'Titular: ' + UI.esc(it.titular) : '', it.planTxt ? UI.esc(it.planTxt) : '',
           it.origen ? 'Origen: ' + UI.esc(it.origen) : '',
           it.ciudad ? UI.esc(it.ciudad) : ''].filter(function (x) { return !!x; }).join(' · ') + '</p>' +
-        waBoton(waUrl(it.telefonoAsesor, 'Hola ' + it.asesor + ', en el CRM está ' + (abono ? 'el abono' : 'la matrícula') +
-          (it.alumno ? ' de ' + it.alumno : '') + '. Cárguela al pozo desde su portal antes de la ceremonia.'),
-          'Recordarle', 'Escribirle por WhatsApp para que la cargue') +
+        '<div class="eq-prod-acc">' +
+          /* 🔴 Carga por el ID del lead: esta lista no trae su teléfono. Sin ID (filas muy
+             viejas, o un servidor anterior al cambio) no hay botón: queda «Buscar por teléfono». */
+          (it.leadId ? '<button class="btn btn-verde eq-prod-cargar" data-lead="' + UI.esc(it.leadId) + '"' +
+            ' data-tipo="' + UI.esc(it.tipo) + '" data-mat="' + UI.esc(it.matId || '') + '"' +
+            ' title="Cargarla al pozo a nombre de ' + UI.esc(it.asesor) + '">' +
+            '<span class="material-symbols-rounded">add_circle</span> Cargar al pozo</button>' : '') +
+          waBoton(waUrl(it.telefonoAsesor, 'Hola ' + it.asesor + ', en el CRM está ' + (abono ? 'el abono' : 'la matrícula') +
+            (it.alumno ? ' de ' + it.alumno : '') + '. Cárguela al pozo desde su portal antes de la ceremonia.'),
+            'Recordarle', 'Escribirle por WhatsApp para que la cargue') +
+        '</div>' +
       '</div>';
     }).join('');
+    Array.prototype.forEach.call(cont.querySelectorAll('[data-lead]'), function (b) {
+      b.onclick = function () {
+        Pozo.cargar({ tipo: b.getAttribute('data-tipo'), leadId: b.getAttribute('data-lead'),
+                      matId: b.getAttribute('data-mat') || '' }, b)
+          .then(function (cargada) { if (cargada) cargarProd(); });
+      };
+    });
   }
 
   function aplicarPestana() {
@@ -4432,6 +4465,8 @@ var Reuniones = (function () {
 
   function cargar() {
     aviso('reuAviso', 'info', 'Cargando las reuniones…');
+    // Lo subido ANTES de este pedido ya lo trae el servidor: solo hay que cubrir lo que se suba mientras viaja.
+    R.imagenes = {};
     API.get({ accion: 'reunionesEditor', token: Sesion.token })
       .then(function (r) {
         if (!r || !r.ok) {
@@ -4439,8 +4474,10 @@ var Reuniones = (function () {
           return;
         }
         R.datos = r;
+        aplicarImagenes();
         aviso('reuAviso');
         pintarLista();
+        if (R.editando && R.editando !== 'nueva') pintarImagen();
         pintarIngreso();
         App.aplicarIngreso(r.ingreso);
       })
@@ -4555,6 +4592,7 @@ var Reuniones = (function () {
     UI.mostrar(UI.id('reuReactivar'), pausada);
     UI.mostrar(UI.id('reuBorrar'), !!x);
     aviso('reuFormAviso');
+    pintarImagen();
     UI.mostrar(UI.id('reuForm'), true);
     UI.id('reuForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
     UI.id('reuNombre').focus();
@@ -4638,6 +4676,221 @@ var Reuniones = (function () {
       .then(function () { R.enviando = false; });
   }
 
+  /*
+   * ══════════════════════════════════════════════════════════════════════════
+   * LA IMAGEN DE LA TARJETA (oct 2026, decisión del dueño)
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * Se guarda EN EL MOMENTO, aparte del «Guardar» del formulario, y solo en una
+   * reunión que ya existe (el servidor la busca por su id).
+   *
+   * El navegador la prepara antes de mandarla:
+   *   · un SVG se DIBUJA y se manda como PNG: al servidor llegan solo PNG o JPG (un SVG
+   *     puede traer código, y Drive no lo sirve bien a una página pública);
+   *   · se achica a 1000 px de lado (una foto de celular pesa 5 MB y no hace falta);
+   *   · con TRANSPARENCIA es un LOGO (PNG, se ve entero, como los escudos); sin ella
+   *     es una FOTO (JPG, llena la portada). Decide la imagen, no quien la sube.
+   */
+  var IMG_LADO = 1000;
+  var IMG_ARCHIVO_MAX = 15 * 1024 * 1024;   // lo que se acepta elegir
+  var IMG_ENVIO_MAX = 2 * 1024 * 1024;      // lo que acepta el servidor (REU_IMG_MAX_BYTES)
+
+  function reunionActual() {
+    if (!R.datos || !R.editando || R.editando === 'nueva') return null;
+    return R.datos.reuniones.filter(function (r) { return r.id === R.editando; })[0] || null;
+  }
+
+  /*
+   * 🔴 Anota la imagen en la reunión POR SU ID, en la lista VIGENTE. Abrir la pestaña
+   * recarga la lista en segundo plano: si la recarga llegaba mientras la imagen subía,
+   * la lista quedaba con objetos nuevos, la imagen se anotaba en el viejo y la vista
+   * previa seguía mostrando el escudo (lo cazó verify-frontend).
+   */
+  function anotarImagen(id, imagen, modo) {
+    // Y queda anotada para la PRÓXIMA lista: una recarga pedida antes de subir la traería sin ella.
+    R.imagenes = R.imagenes || {};
+    R.imagenes[id] = { imagen: imagen, modo: modo };
+    aplicarImagenes();
+  }
+
+  function aplicarImagenes() {
+    var locales = R.imagenes || {};
+    ((R.datos && R.datos.reuniones) || []).forEach(function (r) {
+      if (locales[r.id]) { r.imagen = locales[r.id].imagen; r.imagenModo = locales[r.id].modo; }
+    });
+  }
+
+  /** La vista previa, con el mismo fondo y el mismo criterio que la tarjeta de «Salas». */
+  function pintarImagen() {
+    var x = reunionActual();
+    var vista = UI.id('reuImagenVista');
+    var portada = x ? Dashboard.portada(x.id) : '';
+    var src = x && x.imagen ? x.imagen : portada;
+    var icono = '<span class="material-symbols-rounded">groups</span>';
+    vista.classList.toggle('es-foto', !!(x && x.imagen && x.imagenModo !== 'logo'));
+    vista.innerHTML = src ? '<img src="' + UI.esc(src) + '" alt="">' : icono;
+    var im = vista.querySelector('img');
+    /*
+     * ⚠️ Drive genera la MINIATURA unos segundos después de subir el archivo: pedida
+     * enseguida, falla. Una imagen subida se reintenta antes de caer al ícono, o el
+     * Director cree que no se subió y la vuelve a subir. Con un parámetro distinto en
+     * cada intento: el mismo `src` no siempre vuelve a pedirse.
+     */
+    var intentos = 0;
+    if (im) im.onerror = function () {
+      if (x && x.imagen && src === x.imagen && intentos < 3) {
+        intentos++;
+        setTimeout(function () {
+          if (im.isConnected) im.src = src + (src.indexOf('?') < 0 ? '?' : '&') + 'r=' + intentos;
+        }, 1500 * intentos);
+        return;
+      }
+      vista.classList.remove('es-foto');
+      vista.innerHTML = icono;
+    };
+    UI.mostrar(UI.id('reuImagenSubir'), !!x);
+    UI.mostrar(UI.id('reuImagenQuitar'), !!(x && x.imagen));
+    UI.id('reuImagenNota').textContent = !x
+      ? 'Guarde la reunión primero; después le puede poner una imagen.'
+      : (x.imagen
+          ? (portada ? 'Esta imagen reemplaza al escudo; si la quita, el escudo vuelve. ' : '')
+          : (portada ? 'Tiene el escudo de siempre. ' : 'Sin imagen, la tarjeta muestra un ícono. ')) +
+        'SVG, PNG o JPG. Un logo con fondo transparente se ve entero; una foto llena la tarjeta.';
+  }
+
+  function leerTexto(file) {
+    return new Promise(function (ok, mal) {
+      var fr = new FileReader();
+      fr.onload = function () { ok(String(fr.result || '')); };
+      fr.onerror = function () { mal(new Error('No se pudo leer el archivo.')); };
+      fr.readAsText(file);
+    });
+  }
+
+  function abrirImg(src) {
+    return new Promise(function (ok, mal) {
+      var im = new Image();
+      im.onload = function () { ok(im); };
+      im.onerror = function () { mal(new Error('Esa imagen no se pudo abrir. Pruebe con otro archivo.')); };
+      im.src = src;
+    });
+  }
+
+  /*
+   * El SVG con ancho y alto EXPLÍCITOS, al tamaño final: sin medidas (o con «100%»), el
+   * navegador no sabe de qué tamaño dibujarlo y la imagen sale vacía o diminuta.
+   */
+  function svgConTamano(texto) {
+    var doc = new DOMParser().parseFromString(texto, 'image/svg+xml');
+    var svg = doc.documentElement;
+    if (!svg || String(svg.nodeName).toLowerCase() !== 'svg' || doc.getElementsByTagName('parsererror').length) {
+      throw new Error('Ese SVG no se pudo leer. Pruebe exportarlo de nuevo, o súbalo como PNG.');
+    }
+    var vb = String(svg.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+    var medida = function (a) { var v = String(svg.getAttribute(a) || ''); return /%/.test(v) ? 0 : parseFloat(v); };
+    var w = medida('width'), h = medida('height');
+    var tieneVb = vb.length === 4 && vb[2] > 0 && vb[3] > 0;
+    if (!tieneVb && w > 0 && h > 0) svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    var prop = tieneVb ? vb[2] / vb[3] : (w > 0 && h > 0 ? w / h : 1);
+    svg.setAttribute('width', String(prop >= 1 ? IMG_LADO : Math.round(IMG_LADO * prop)));
+    svg.setAttribute('height', String(prop >= 1 ? Math.round(IMG_LADO / prop) : IMG_LADO));
+    return new XMLSerializer().serializeToString(svg);
+  }
+
+  function tieneTransparencia(ctx, w, h) {
+    var d = ctx.getImageData(0, 0, w, h).data;
+    for (var i = 3; i < d.length; i += 4) if (d[i] < 250) return true;
+    return false;
+  }
+
+  /** El archivo elegido → { base64, modo }. Rechaza con un mensaje para la persona. */
+  function prepararImagen(file) {
+    var esSvg = file.type === 'image/svg+xml' || /\.svg$/i.test(file.name || '');
+    var esJpg = file.type === 'image/jpeg';
+    if (!esSvg && !esJpg && file.type !== 'image/png') return Promise.reject(new Error('Suba una imagen SVG, PNG o JPG.'));
+    if (file.size > IMG_ARCHIVO_MAX) return Promise.reject(new Error('Ese archivo es muy grande (más de 15 MB).'));
+    var url = '';
+    var abrir = esSvg
+      ? leerTexto(file).then(function (t) {
+          url = URL.createObjectURL(new Blob([svgConTamano(t)], { type: 'image/svg+xml' }));
+          return abrirImg(url);
+        })
+      : abrirImg(url = URL.createObjectURL(file));
+    return abrir.then(function (im) {
+      var w = im.naturalWidth, h = im.naturalHeight;
+      if (!w || !h) throw new Error('Esa imagen no tiene tamaño. Pruebe con otro archivo.');
+      // Una foto solo se ACHICA; un SVG ya viene dibujado al tamaño final.
+      var k = Math.min(1, IMG_LADO / Math.max(w, h));
+      var c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(w * k));
+      c.height = Math.max(1, Math.round(h * k));
+      var logo, dataUrl;
+      try {
+        var ctx = c.getContext('2d');
+        ctx.drawImage(im, 0, 0, c.width, c.height);
+        logo = !esJpg && tieneTransparencia(ctx, c.width, c.height);
+        dataUrl = logo ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', 0.86);
+      } catch (err) {
+        throw new Error('Esa imagen no se pudo preparar en este navegador. Pruebe con un PNG.');
+      }
+      var base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+      if (base64.length * 0.75 > IMG_ENVIO_MAX) throw new Error('La imagen quedó demasiado pesada. Pruebe con un PNG o JPG más simple.');
+      return { base64: base64, modo: logo ? 'logo' : 'foto' };
+    }).then(function (r) { if (url) URL.revokeObjectURL(url); return r; },
+            function (e) { if (url) URL.revokeObjectURL(url); throw e; });
+  }
+
+  function subirImagen(file) {
+    var x = reunionActual();
+    if (!x || !file) return;
+    if (R.enviando) {
+      // Ignorarla en silencio dejaba el archivo elegido: elegir el MISMO otra vez no hacía nada.
+      UI.id('reuImagenArchivo').value = '';
+      UI.toast('Espere a que termine de guardar y vuelva a elegir la imagen.', 'info', 6000);
+      return;
+    }
+    R.enviando = true;
+    var lbl = UI.id('reuImagenSubir');
+    lbl.classList.add('ocupado');
+    aviso('reuFormAviso', 'info', 'Preparando la imagen…');
+    prepararImagen(file)
+      .then(function (img) {
+        aviso('reuFormAviso', 'info', 'Subiendo la imagen…');
+        return API.post({ accion: 'reunionImagen', token: Sesion.token, id: x.id, imagen: img.base64, modo: img.modo });
+      })
+      .then(function (r) {
+        if (!r || !r.ok) { aviso('reuFormAviso', 'error', UI.esc((r && r.message) || 'No se pudo subir la imagen.')); return; }
+        anotarImagen(x.id, r.imagen, r.imagenModo);
+        aviso('reuFormAviso');
+        pintarImagen();
+        UI.toast(r.imagenModo === 'logo' ? 'Imagen guardada como logo: se ve entera en la tarjeta.'
+                                         : 'Imagen guardada como foto: llena la tarjeta.', 'ok');
+      })
+      .catch(function (e) { aviso('reuFormAviso', 'error', UI.esc((e && e.message) || 'Error de conexión.')); })
+      .then(function () {
+        R.enviando = false;
+        lbl.classList.remove('ocupado');
+        UI.id('reuImagenArchivo').value = '';   // elegir el MISMO archivo otra vez tiene que volver a subirlo
+      });
+  }
+
+  function quitarImagen() {
+    var x = reunionActual();
+    if (!x || R.enviando) return;
+    if (!window.confirm('¿Quitar la imagen? La tarjeta vuelve a mostrar ' +
+        (Dashboard.portada(x.id) ? 'el escudo de siempre.' : 'el ícono.'))) return;
+    R.enviando = true;
+    API.post({ accion: 'reunionImagenQuitar', token: Sesion.token, id: x.id })
+      .then(function (r) {
+        if (!r || !r.ok) { aviso('reuFormAviso', 'error', UI.esc((r && r.message) || 'No se pudo quitar.')); return; }
+        anotarImagen(x.id, '', '');
+        pintarImagen();
+        UI.toast('Imagen quitada.', 'ok');
+      })
+      .catch(function (e) { aviso('reuFormAviso', 'error', UI.esc((e && e.message) || 'Error de conexión.')); })
+      .then(function () { R.enviando = false; });
+  }
+
   function guardarIngreso() {
     if (R.enviando) return;
     R.enviando = true;
@@ -4669,6 +4922,10 @@ var Reuniones = (function () {
     UI.id('reuReactivar').addEventListener('click', function () { cambiarEstado('activa'); });
     UI.id('reuBorrar').addEventListener('click', function () { cambiarEstado('borrada'); });
     UI.id('btnIngresoGuardar').addEventListener('click', guardarIngreso);
+    UI.id('reuImagenArchivo').addEventListener('change', function (ev) {
+      subirImagen(ev.target.files && ev.target.files[0]);
+    });
+    UI.id('reuImagenQuitar').addEventListener('click', quitarImagen);
     UI.id('reuFilial').addEventListener('change', function () { pintarOrgs([]); });
     Array.prototype.forEach.call(document.querySelectorAll('input[name="reuAud"], input[name="reuModo"]'), function (r) {
       r.addEventListener('change', alCambiarOpciones);
