@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<!-- JDS — © 2026 José David Suárez Terceros. Todos los derechos reservados. Uso bajo licencia. -->
+<!--
+  Página PÚBLICA de la cita de Captación (31-oct-2026). La abre el postulante desde el botón del
+  correo o el enlace de WhatsApp: cita.html?cita=<token de 32 caracteres>.
+
+  🔴 Es de CAPTACIÓN, no del Portal: vive en este sitio público solo para no mostrar la franja gris
+  que Google pone arriba de toda página de Apps Script («creada por un usuario de Apps Script»).
+  Los datos y la confirmación los da el panel de Captación (doGet ?accion=cita y doPost), con la
+  dirección del <meta name="captacion-api">. Acá no hay NADA del CRM: ni código, ni planillas.
+  Reemplaza a Confirmar.html (que sigue en Google como respaldo mientras no esté la propiedad
+  CAP_URL_CONFIRMAR). Guard: CRM y ERP/.claude/skills/run-crm-bionic/verify-captacion-cita-publica.mjs.
+
+  🔴 NO confirma al abrirse: los antivirus del correo abren los enlaces. Muestra la cita y dos
+     botones. Confirmar es idempotente en el servidor, así que reintentar es seguro.
+  🔴 Los POST van con Content-Type text/plain: con application/json el navegador pide un permiso
+     previo que Apps Script no sabe contestar (misma regla que app.js del Portal).
+  🔴 Todo lo que llega del servidor se escribe como TEXTO (textContent) y los enlaces solo si son https.
+-->
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="captacion-api" content="https://script.google.com/macros/s/AKfycbz6xgJRFkcYAlaFeP2qN98wkx5SxUBrmw5oWM6xU7dSV8lbW6pIUH1yCQDYIPAd6TNqwg/exec">
+<title>Tu entrevista · Bionic Mind</title>
+<style>
+  :root { --brand:#FFA800; --ink:#0F172A; --muted:#64748B; --card:#fff; --line:#E2E8F0; --bg:#F7F8FC;
+          --danger:#E11D48; --success:#16A34A; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:Arial, Helvetica, sans-serif; }
+  .caja { max-width:520px; margin:24px auto; padding:0 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:22px; box-shadow:0 8px 32px rgba(31,38,135,.06); }
+  h1 { font-size:1.3rem; margin:0 0 6px; }
+  .sub { color:var(--muted); margin:0 0 18px; }
+  .dato { display:flex; gap:10px; align-items:flex-start; margin:10px 0; font-size:1rem; line-height:1.45; overflow-wrap:anywhere; }
+  .foto { width:100%; border-radius:12px; margin:12px 0 4px; display:block; }
+  .botones { display:flex; gap:10px; flex-wrap:wrap; margin-top:20px; }
+  button, .enlace { font:inherit; border-radius:10px; padding:12px 18px; border:1px solid var(--line); cursor:pointer; text-decoration:none; display:inline-block; }
+  .si { background:var(--brand); border-color:var(--brand); color:var(--ink); font-weight:bold; }
+  .no, .enlace { background:#fff; color:var(--ink); }
+  button:disabled { opacity:.6; cursor:default; }
+  .estado { margin-top:16px; padding:12px 14px; border-radius:10px; font-weight:bold; display:none; }
+  .estado.ok { display:block; background:#DCFCE7; color:var(--success); }
+  .estado.no { display:block; background:#FEF3C7; color:#92400E; }
+  .estado.err { display:block; background:#FFE4E6; color:var(--danger); }
+  .marca { text-align:center; color:var(--muted); font-size:.8rem; margin-top:14px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<div class="caja">
+  <div class="card">
+    <div id="cargando"><h1>Cargando tu entrevista…</h1><p class="sub">Un momento.</p></div>
+
+    <div id="invalida" hidden>
+      <h1>Este enlace ya no sirve</h1>
+      <p class="sub" id="invalidaTexto">Si tienes dudas sobre tu entrevista, responde al correo o al mensaje que recibiste.</p>
+    </div>
+
+    <div id="cita" hidden>
+      <h1>Hola <span id="nombre"></span>, esta es tu entrevista</h1>
+      <p class="sub">Bionic Mind</p>
+      <div class="dato"><span>📅</span><span id="cuando"></span></div>
+      <div class="dato" id="filaLugar"><span>📍</span><span id="lugar"></span></div>
+      <div class="dato" id="filaMapa" hidden><span>🗺️</span><a id="mapa" target="_blank" rel="noopener">Ver en el mapa</a></div>
+      <div class="dato" id="filaMeet" hidden><span>🎥</span><a id="meet" target="_blank" rel="noopener">Enlace de la videollamada</a></div>
+      <img class="foto" id="foto" alt="Fachada del lugar de la entrevista" hidden>
+      <div class="botones" id="botones" hidden>
+        <button type="button" class="si" id="btnSi" data-respuesta="si">✅ Confirmo que voy</button>
+        <button type="button" class="no" id="btnNo" data-respuesta="no">No puedo ir</button>
+        <a class="enlace" id="calendario" target="_blank" rel="noopener" hidden>📅 Agregar a Google Calendar</a>
+      </div>
+      <div class="estado" id="estado"></div>
+    </div>
+  </div>
+  <div class="marca">Bionic Mind</div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var API = (document.querySelector('meta[name="captacion-api"]') || {}).content || '';
+  var TOKEN = new URLSearchParams(location.search).get('cita') || '';
+  var $ = function (id) { return document.getElementById(id); };
+
+  /* Solo enlaces https (un «javascript:» en un dato sería código) y fotos que vengan como imagen. */
+  function enlace(u) { return /^https:\/\/[^\s<>"']+$/i.test(String(u || '')) ? String(u) : ''; }
+  function imagen(u) { return /^data:image\/(jpeg|png);base64,[A-Za-z0-9+\/=]+$/.test(String(u || '')) ? String(u) : ''; }
+
+  function invalida(texto) {
+    $('cargando').hidden = true; $('cita').hidden = true; $('invalida').hidden = false;
+    if (texto) $('invalidaTexto').textContent = texto;
+  }
+  function pintarEstado(clase, texto) { var e = $('estado'); e.className = 'estado ' + clase; e.textContent = texto; }
+  function pintarRespuesta(valor) {
+    if (valor === 'SI') pintarEstado('ok', '¡Gracias! Quedó confirmado. Te esperamos.');
+    else if (valor === 'NO') pintarEstado('no', 'Gracias por avisar. Alguien del equipo se va a comunicar contigo.');
+  }
+
+  /* El transporte de Apps Script a veces responde un error de una sola vez: se reintenta. */
+  function pedir(opciones, intentos) {
+    return fetch(API + (opciones.query || ''), opciones.init || {}).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).catch(function (err) {
+      if (intentos > 1) return new Promise(function (ok) { setTimeout(ok, 700); }).then(function () { return pedir(opciones, intentos - 1); });
+      throw err;
+    });
+  }
+
+  function pintar(d) {
+    $('nombre').textContent = d.nombre || '';
+    $('cuando').textContent = (d.fecha || '') + (d.hora ? ' a las ' + d.hora : '');
+    $('lugar').textContent = d.lugar || '';
+    $('filaLugar').hidden = !d.lugar;
+    var m = enlace(d.mapa); if (m) { $('mapa').href = m; $('filaMapa').hidden = false; }
+    var meet = enlace(d.meet); if (meet) { $('meet').href = meet; $('filaMeet').hidden = false; }
+    var f = imagen(d.foto); if (f) { $('foto').src = f; $('foto').hidden = false; }
+    var cal = enlace(d.calendario); if (cal) { $('calendario').href = cal; $('calendario').hidden = false; }
+    $('botones').hidden = !d.abierta;
+    $('cargando').hidden = true; $('cita').hidden = false;
+    if (d.confirmo) pintarRespuesta(d.confirmo);
+    if (!d.abierta) pintarEstado('no', 'Tu entrevista ya pasó a otra etapa: no hace falta confirmar.');
+  }
+
+  function responder(respuesta) {
+    var bs = document.querySelectorAll('[data-respuesta]');
+    var habilitar = function (si) { for (var i = 0; i < bs.length; i++) bs[i].disabled = !si; };
+    habilitar(false);
+    pedir({ init: { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ accion: 'confirmar', cita: TOKEN, respuesta: respuesta }) } }, 2)
+      .then(function (r) {
+        habilitar(true);
+        if (!r || !r.ok) { pintarEstado('err', (r && r.message) || 'No se pudo guardar tu respuesta.'); return; }
+        if (r.yaPaso) { pintarEstado('no', 'Tu entrevista ya pasó a otra etapa: no hace falta confirmar.'); return; }
+        pintarRespuesta(r.confirmo);
+      })
+      .catch(function () { habilitar(true); pintarEstado('err', 'Error de conexión. Prueba de nuevo en un momento.'); });
+  }
+
+  $('btnSi').addEventListener('click', function () { responder('si'); });
+  $('btnNo').addEventListener('click', function () { responder('no'); });
+
+  if (!/^[0-9a-f]{32}$/.test(TOKEN) || !API) { invalida(); return; }
+  pedir({ query: '?accion=cita&cita=' + encodeURIComponent(TOKEN) }, 3)
+    .then(function (r) { if (r && r.ok && r.datos && r.datos.valida) pintar(r.datos); else invalida(); })
+    .catch(function () { invalida('No pudimos cargar tu entrevista. Revisa tu conexión y vuelve a abrir el enlace.'); });
+})();
+</script>
+</body>
+</html>
