@@ -1320,6 +1320,8 @@ var Sala = (function () {
     timerAsis: null,
     enReunion: false,   // apretó "Entrar a la reunión" (ver Sala.alEntrarAReunion)
     enviando: false,
+    genMando: 0,         // sube al cambiar quién conduce: ver `refrescarTrasCambio`
+    tomando: null,       // texto del botón mientras viaja un pedido de tomar la sala: ver `botonOcupado`
     asisValidada: false, // asistencia ya registrada EN ESTA SALA
     redCaida: false,     // para no repetir el aviso de conexión en cada sondeo
     asisFaltan: null,
@@ -1439,13 +1441,14 @@ var Sala = (function () {
     // no muestra el festejo. La cadena se corta acá y la reanuda `alVolverAlFrente`.
     if (document.hidden && S.estado && !S.estado.soyAnfitrion) return;
     enVuelo = true;
-    var t0 = Date.now();
+    var t0 = Date.now(), gen = S.genMando;
     API.get({ accion: 'estadoSala', token: Sesion.token, salaId: S.sala.id })
       .then(function (r) {
         if (!S.sala) return;
         if (!r || !r.ok) { avisarCaida((r && r.message) || 'No se pudo leer la sala.'); return; }
         medirViaje(Date.now() - t0);
         avisarRecuperada();
+        if (gen !== S.genMando) return;   // salió antes de cambiar el mando: ver `refrescarTrasCambio`
         if (respuestaVieja(r)) return;
         aplicar(r);
       })
@@ -1505,11 +1508,12 @@ var Sala = (function () {
    */
   function consultarAparte() {
     if (!S.sala) return Promise.resolve();
-    var salaId = S.sala.id, t0 = Date.now();
+    var salaId = S.sala.id, t0 = Date.now(), gen = S.genMando;
     return API.get({ accion: 'estadoSala', token: Sesion.token, salaId: salaId })
       .then(function (r) {
         if (!S.sala || S.sala.id !== salaId || !r || !r.ok) return;
         medirViaje(Date.now() - t0);
+        if (gen !== S.genMando) return;
         if (respuestaVieja(r)) return;
         aplicar(r);
       })
@@ -1528,6 +1532,30 @@ var Sala = (function () {
     clearTimeout(S.timerPoll);
     S.timerPoll = null;
     poll();
+  }
+
+  /*
+   * 🔴 DESPUÉS DE CAMBIAR QUIÉN CONDUCE, LA PANTALLA SE ENTERA EN EL ACTO (nov 2026).
+   *
+   * El dueño: «pongo mi contraseña pero no pasa nada; a veces sí, a veces no». La
+   * sala SÍ cambiaba de mano. Lo que fallaba era esta pantalla: `pollYa()` no hace
+   * nada si hay una consulta del sondeo en camino, y esa consulta había salido ANTES
+   * del clic — volvía diciendo «conduce la otra persona», se pintaba, y quien no
+   * conduce recién vuelve a preguntar a los 15 s.
+   *
+   * Dos piezas, y hacen falta las dos:
+   *   · `genMando` sube: toda consulta que salió antes se DESCARTA al volver (poll y
+   *     consultarAparte la comparan). Sin esto, la vieja pisa a la nueva si llega después.
+   *   · una consulta aparte SALE YA, aunque el sondeo tenga una en vuelo.
+   *
+   * ⚠️ Solo para las acciones del mando (tomar, desplazar, liberar, abrir): el
+   * festejo tiene sus propias reglas contra respuestas tardías (`respuestaVieja`).
+   * Guard: verify-tomar-sala.mjs (fuerza el cruce con el ritmo de verdad).
+   */
+  function refrescarTrasCambio() {
+    S.genMando++;
+    if (enVuelo) consultarAparte();
+    else pollYa();
   }
 
   /*
@@ -1916,6 +1944,7 @@ var Sala = (function () {
     renderEspera();
     renderEscenario();
     renderAnfitrion();
+    marcarTomando();     // un repintado mientras viaja el pedido no deja un botón «libre»
     renderFestejo();
     renderAsistencia();
   }
@@ -2673,26 +2702,67 @@ var Sala = (function () {
 
   // Devuelve SIEMPRE una promesa, incluso al cortar por reentrada: los llamadores
   // encadenan un .then para volver a habilitar su botón, y devolver undefined lo
-  // dejaría deshabilitado para siempre por un doble clic.
+  // dejaría deshabilitado para siempre por un doble clic. Resuelve `true` solo si
+  // el servidor dijo ok (ver `botonOcupado`).
   function accion(payload, alOk) {
     if (S.enviando) return Promise.resolve();
     S.enviando = true;
+    var salioBien = false;
     return API.post(payload)
       .then(function (r) {
         if (!r || !r.ok) { UI.toast((r && r.message) || 'No se pudo completar.', 'error'); return; }
+        salioBien = true;
         if (alOk) alOk(r);
-        pollYa();
+        refrescarTrasCambio();
       })
       .catch(function (e) { UI.toast(e.message || 'Error de conexión.', 'error'); })
-      .then(function () { S.enviando = false; });
+      .then(function () { S.enviando = false; return salioBien; });
+  }
+
+  /*
+   * El botón dice que el clic entró mientras el pedido viaja (segundos, en Apps
+   * Script). Sin esto, quien toma la sala no veía NADA, volvía a apretar —y el
+   * segundo clic lo descarta `S.enviando` en silencio—.
+   *
+   * Revisión de Gemini (7-nov-2026), dos huecos con el mismo origen —el bloque solo se
+   * repinta si cambia su FIRMA (`pintarSi`)—:
+   *   · Si el bloque se repinta MIENTRAS viaja el pedido (el anfitrión pasó a «sin
+   *     señal»), el botón nuevo nacía habilitado y apretarlo no hacía nada. Por eso
+   *     `S.tomando` y `marcarTomando()`, que corre después de cada repintado.
+   *   · Al volver, se BORRA la firma: el bloque se repinta sí o sí. Si salió bien, con
+   *     el estado nuevo; si salió mal, en el acto. Sin eso, si el estado nuevo era igual
+   *     al de antes del clic (otro la volvió a tomar), el botón quedaba en «Tomando…».
+   */
+  function botonOcupado(id, texto) {
+    if (!UI.id(id)) return function () {};
+    S.tomando = texto;
+    marcarTomando();
+    return function (salioBien) {
+      S.tomando = null;
+      var cont = UI.id('anfitrionCuerpo');
+      if (cont) cont.removeAttribute('data-firma');
+      if (!salioBien && S.estado && S.sala) renderAnfitrion();
+    };
+  }
+
+  /** Mientras viaja un pedido de tomar la sala, todo botón de acción del bloque se ve ocupado. */
+  function marcarTomando() {
+    var cont = UI.id('anfitrionCuerpo');
+    if (!S.tomando || !cont) return;
+    Array.prototype.forEach.call(cont.querySelectorAll('.btn-accion'), function (b) {
+      b.disabled = true;
+      b.innerHTML = '<span class="material-symbols-rounded">hourglass_top</span> ' + UI.esc(S.tomando);
+    });
   }
 
   /* Tomar una sala LIBRE. Sin contraseña: ver el comentario de `renderAnfitrion`. */
   function reclamar() {
+    if (S.enviando) return;
     // Cuenta como decisión: si sale mal, no se reintenta sola en el próximo sondeo.
     S.autoTomaResuelta = true;
+    var devolver = botonOcupado('btnReclamar', 'Tomando la sala…');
     accion({ accion: 'reclamarAnfitrion', token: Sesion.token, salaId: S.sala.id },
-      function () { UI.toast('Tomó la sala.', 'ok'); });
+      function () { UI.toast('Tomó la sala.', 'ok'); }).then(devolver);
   }
 
   /*
@@ -2702,6 +2772,8 @@ var Sala = (function () {
    * delante de toda la filial.
    */
   function desplazar() {
+    // Un Enter o un clic de más mientras viaja no vuelve a preguntar «¿tomarla?».
+    if (S.enviando) return;
     var input = UI.id('passAnfitrion');
     var pass = input ? input.value : '';
     if (!pass) { UI.toast('Escriba su contraseña.', 'error'); return; }
@@ -2710,9 +2782,11 @@ var Sala = (function () {
     if (!window.confirm('La sala la está conduciendo ' + quien + '.\n\n' +
                         '¿Tomarla usted? ' + quien + ' deja de poder pedir producción.')) return;
 
+    var devolver = botonOcupado('btnDesplazar', 'Tomando la sala…');
     accion({ accion: 'reclamarAnfitrion', token: Sesion.token, salaId: S.sala.id,
              password: pass, desplazar: true },
-      function (r) { UI.toast('Tomó la sala' + (r.desplazado ? ' (era de ' + r.desplazado + ')' : '') + '.', 'ok'); });
+      function (r) { UI.toast('Tomó la sala' + (r.desplazado ? ' (era de ' + r.desplazado + ')' : '') + '.', 'ok'); })
+      .then(devolver);
   }
 
   /*
